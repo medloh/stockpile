@@ -366,6 +366,21 @@ def test_strategy_sets_partition_correctly():
     assert missing == set(), f"strategies not categorized: {missing}"
 
 
+def test_calendar_with_earnings_dates_no_crash(synthetic_chain):
+    """Calendar spreads use 'front→back' expiration strings — must not crash
+    the earnings-window date parse in _finalise."""
+    from datetime import date as _date
+    earnings = [_date(2026, 6, 30)]
+    df, errs = scan_spreads(
+        synthetic_chain,
+        strategies=["Calendar / Diagonal"],
+        min_dte=20, max_dte=90, min_width=5, max_width=25,
+        min_oi=10, min_pop=0.30,
+        earnings_dates=earnings,
+    )
+    assert errs == [], f"unexpected errors: {errs}"
+
+
 def test_spread_cols_constant_matches_finalise_output(synthetic_chain):
     """The columns produced by builders should equal SPREAD_COLS exactly."""
     out = build_bull_put_spreads(synthetic_chain, 20, 90, 5, 25, 10)

@@ -253,7 +253,9 @@ def _spread_greeks(legs: list[dict], spot: float, T: float) -> dict:
 def _has_earnings(expiration: str, earnings_dates: list) -> bool:
     if not earnings_dates:
         return False
-    exp = datetime.strptime(expiration, "%Y-%m-%d").date()
+    # Calendar spreads use "front→back" format; use the front (earlier) date
+    exp_str = expiration.split("→")[0]
+    exp = datetime.strptime(exp_str, "%Y-%m-%d").date()
     today = date.today()
     return any(today < e <= exp for e in earnings_dates)
 
