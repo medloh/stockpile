@@ -35,11 +35,34 @@ STRATEGY_NAMES = [
     "Bear Call Spread",
     "Bull Call Spread",
     "Bear Put Spread",
+    "Jade Lizard",
+    "Risk Reversal",
     "Iron Condor",
     "Iron Butterfly",
-    "Jade Lizard",
+    "Broken-Wing Butterfly",
     "Calendar / Diagonal",
     "Ratio Spread (1×2)",
+    "Long Straddle",
+    "Long Strangle",
+]
+
+DIRECTIONAL_STRATEGIES = [
+    "Bull Put Spread",
+    "Bear Call Spread",
+    "Bull Call Spread",
+    "Bear Put Spread",
+    "Jade Lizard",
+    "Risk Reversal",
+]
+
+NEUTRAL_STRATEGIES = [
+    "Iron Condor",
+    "Iron Butterfly",
+    "Broken-Wing Butterfly",
+    "Calendar / Diagonal",
+    "Ratio Spread (1×2)",
+    "Long Straddle",
+    "Long Strangle",
 ]
 
 # ── BS helpers ────────────────────────────────────────────────────────────────
@@ -150,7 +173,22 @@ def build_legs_from_row(row: pd.Series) -> list[dict]:
         legs = [_leg(s_type, st, -1, s_mid, s_iv),
                 _leg(l_type, lt, +1, l_mid, l_iv)]
 
-    elif strategy in ("Iron Condor", "Iron Butterfly"):
+    elif strategy == "Long Straddle":
+        # Same strike for call + put; long both
+        legs = [_leg("call", lt, +1, l_mid, l_iv),
+                _leg("put",  st, +1, s_mid, s_iv)]
+
+    elif strategy == "Long Strangle":
+        # short_strike = put strike (lower), long_strike = call strike (upper)
+        legs = [_leg("call", lt, +1, l_mid, l_iv),
+                _leg("put",  st, +1, s_mid, s_iv)]
+
+    elif strategy == "Risk Reversal":
+        # short_strike = put (sold), long_strike = call (bought)
+        legs = [_leg("call", lt, +1, l_mid, l_iv),
+                _leg("put",  st, -1, s_mid, s_iv)]
+
+    elif strategy in ("Iron Condor", "Iron Butterfly", "Broken-Wing Butterfly"):
         st2 = row.get("short_strike2", float("nan"))
         lt2 = row.get("long_strike2", float("nan"))
         s_mid2 = row.get("short_mid2", 0.0)
@@ -635,8 +673,16 @@ def build_iron_butterflies(df, min_dte, max_dte, min_width, max_width,
                 {"type": "call", "strike": float(lc_row["strike"]), "qty": +1, "entry_mid": float(lc_row["mid"]), "iv": float(lc_row["iv"])},
             ]
             g = _spread_greeks(legs, spot, T)
+
+            put_wing = float(sp_row["strike"]) - float(lp_row["strike"])
+            call_wing = float(lc_row["strike"]) - float(sc_row["strike"])
+            strike_match = abs(float(sp_row["strike"]) - float(sc_row["strike"])) < 0.01
+            wing_match = abs(put_wing - call_wing) < 0.01
+            label = ("Iron Butterfly" if (strike_match and wing_match)
+                     else "Broken-Wing Butterfly")
+
             rows.append({
-                "strategy": "Iron Butterfly", "expiration": exp,
+                "strategy": label, "expiration": exp,
                 "dte": dte, "spot": spot,
                 "short_strike": float(sp_row["strike"]),
                 "long_strike": float(lp_row["strike"]),
@@ -758,7 +804,9 @@ def build_calendar_spreads(df, min_dte, max_dte, min_width, max_width,
             dte_back = int(sub[sub["expiration"] == exp_back]["dte"].iloc[0])
             if dte_back < dte_front + 14:
                 continue
-            if max_dte and dte_back > max_dte * 2:
+            # Allow back month up to (front + max(max_dte, 365)) so
+            # LEAPS-style calendars qualify on long-DTE searches
+            if dte_back > dte_front + max(max_dte, 365):
                 continue
 
             front = sub[sub["expiration"] == exp_front]
@@ -930,18 +978,243 @@ def build_ratio_spreads(df, min_dte, max_dte, min_width, max_width,
     return _finalise(rows, spot, earnings_dates or [])
 
 
+# ── Builder: Long Straddle ────────────────────────────────────────────────────
+
+def build_long_straddles(df, min_dte, max_dte, min_width, max_width,
+                          min_oi, earnings_dates=None):
+    """Long call + long put at same strike. Pure long-volatility play."""
+    spot = float(df["spot"].iloc[0])
+    sub = df[(df["dte"] >= min_dte) & (df["dte"] <= max_dte) &
+             (df["open_interest"] >= min_oi)].copy()
+    # Near-ATM only (within 5% of spot)
+    sub = sub[(sub["strike"] - spot).abs() / spot < 0.05]
+    if sub.empty:
+        return _empty()
+
+    calls = sub[sub["type"] == "call"]
+    puts = sub[sub["type"] == "put"]
+    if calls.empty or puts.empty:
+        return _empty()
+
+    # Match on (expiration, strike) — same strike for both legs
+    m = calls.merge(puts, on=["expiration", "strike", "dte"],
+                    suffixes=("_c", "_p"))
+    if m.empty:
+        return _empty()
+
+    rows = []
+    for _, r in m.iterrows():
+        K = float(r["strike"])
+        net_debit = float(r["mid_c"]) + float(r["mid_p"])
+        if net_debit <= 0.01:
+            continue
+        max_loss = net_debit
+        # Cap max profit at 3× debit for ranking (theoretical upside is unbounded)
+        max_profit = 3 * net_debit
+        be_lower = K - net_debit
+        be_upper = K + net_debit
+        dte = int(r["dte"])
+        T = _T(dte)
+        iv_c = float(r["iv_c"])
+        iv_p = float(r["iv_p"])
+        pop = (prob_above(spot, be_upper, T, iv_c)
+               + (1 - prob_above(spot, be_lower, T, iv_p)))
+        pop = min(max(pop, 0.0), 1.0)
+
+        legs = [
+            {"type": "call", "strike": K, "qty": +1,
+             "entry_mid": float(r["mid_c"]), "iv": iv_c},
+            {"type": "put",  "strike": K, "qty": +1,
+             "entry_mid": float(r["mid_p"]), "iv": iv_p},
+        ]
+        g = _spread_greeks(legs, spot, T)
+        rows.append({
+            "strategy": "Long Straddle", "expiration": r["expiration"],
+            "dte": dte, "spot": spot,
+            "short_strike": K, "long_strike": K,
+            "short_type": "call", "long_type": "put",
+            "short_mid": float(r["mid_c"]), "long_mid": float(r["mid_p"]),
+            "short_iv": iv_c, "long_iv": iv_p,
+            "net_credit": -net_debit,
+            "max_profit": max_profit, "max_loss": max_loss,
+            "risk_reward": max_profit / max_loss,
+            "pop": pop,
+            "ann_yield_pct": max_profit / max_loss * (365 / dte) * 100,
+            "breakeven1": be_lower, "breakeven2": be_upper,
+            "short_iv_excess": float(r.get("iv_excess_c", 0.0)),
+            "short_oi": int(r["open_interest_c"]),
+            "long_oi": int(r["open_interest_p"]),
+            **g,
+        })
+    return _finalise(rows, spot, earnings_dates or [])
+
+
+# ── Builder: Long Strangle ────────────────────────────────────────────────────
+
+def build_long_strangles(df, min_dte, max_dte, min_width, max_width,
+                          min_oi, earnings_dates=None):
+    """Long OTM call + long OTM put at different strikes. Cheaper long-vol."""
+    spot = float(df["spot"].iloc[0])
+    calls = df[(df["type"] == "call") &
+               (df["dte"] >= min_dte) & (df["dte"] <= max_dte) &
+               (df["open_interest"] >= min_oi) &
+               (df["delta"] >= 0.10) & (df["delta"] <= 0.40) &
+               (df["strike"] > spot)].copy()
+    puts = df[(df["type"] == "put") &
+              (df["dte"] >= min_dte) & (df["dte"] <= max_dte) &
+              (df["open_interest"] >= min_oi) &
+              (df["delta"].abs() >= 0.10) & (df["delta"].abs() <= 0.40) &
+              (df["strike"] < spot)].copy()
+    if calls.empty or puts.empty:
+        return _empty()
+
+    m = calls.merge(puts, on=["expiration", "dte"], suffixes=("_c", "_p"))
+    if m.empty:
+        return _empty()
+    width = m["strike_c"] - m["strike_p"]
+    m = m[width.between(min_width, max_width)]
+    if m.empty:
+        return _empty()
+
+    rows = []
+    for _, r in m.iterrows():
+        K_c = float(r["strike_c"])
+        K_p = float(r["strike_p"])
+        net_debit = float(r["mid_c"]) + float(r["mid_p"])
+        if net_debit <= 0.01:
+            continue
+        max_loss = net_debit
+        max_profit = 3 * net_debit
+        be_upper = K_c + net_debit
+        be_lower = K_p - net_debit
+        dte = int(r["dte"])
+        T = _T(dte)
+        iv_c = float(r["iv_c"])
+        iv_p = float(r["iv_p"])
+        pop = (prob_above(spot, be_upper, T, iv_c)
+               + (1 - prob_above(spot, be_lower, T, iv_p)))
+        pop = min(max(pop, 0.0), 1.0)
+
+        legs = [
+            {"type": "call", "strike": K_c, "qty": +1,
+             "entry_mid": float(r["mid_c"]), "iv": iv_c},
+            {"type": "put",  "strike": K_p, "qty": +1,
+             "entry_mid": float(r["mid_p"]), "iv": iv_p},
+        ]
+        g = _spread_greeks(legs, spot, T)
+        rows.append({
+            "strategy": "Long Strangle", "expiration": r["expiration"],
+            "dte": dte, "spot": spot,
+            "short_strike": K_p, "long_strike": K_c,
+            "short_type": "put", "long_type": "call",
+            "short_mid": float(r["mid_p"]), "long_mid": float(r["mid_c"]),
+            "short_iv": iv_p, "long_iv": iv_c,
+            "net_credit": -net_debit,
+            "max_profit": max_profit, "max_loss": max_loss,
+            "risk_reward": max_profit / max_loss,
+            "pop": pop,
+            "ann_yield_pct": max_profit / max_loss * (365 / dte) * 100,
+            "breakeven1": be_lower, "breakeven2": be_upper,
+            "short_iv_excess": float(r.get("iv_excess_c", 0.0)),
+            "short_oi": int(r["open_interest_p"]),
+            "long_oi": int(r["open_interest_c"]),
+            **g,
+        })
+    return _finalise(rows, spot, earnings_dates or [])
+
+
+# ── Builder: Risk Reversal ────────────────────────────────────────────────────
+
+def build_risk_reversals(df, min_dte, max_dte, min_width, max_width,
+                          min_oi, earnings_dates=None):
+    """Long OTM call + short OTM put, same expiration. Bullish synthetic long."""
+    spot = float(df["spot"].iloc[0])
+    calls = df[(df["type"] == "call") &
+               (df["dte"] >= min_dte) & (df["dte"] <= max_dte) &
+               (df["open_interest"] >= min_oi) &
+               (df["delta"] >= 0.10) & (df["delta"] <= 0.40) &
+               (df["strike"] > spot)].copy()
+    puts = df[(df["type"] == "put") &
+              (df["dte"] >= min_dte) & (df["dte"] <= max_dte) &
+              (df["open_interest"] >= min_oi) &
+              (df["delta"].abs() >= 0.10) & (df["delta"].abs() <= 0.40) &
+              (df["strike"] < spot)].copy()
+    if calls.empty or puts.empty:
+        return _empty()
+
+    m = calls.merge(puts, on=["expiration", "dte"], suffixes=("_c", "_p"))
+    if m.empty:
+        return _empty()
+    width = m["strike_c"] - m["strike_p"]
+    m = m[width.between(min_width, max_width)]
+    if m.empty:
+        return _empty()
+
+    rows = []
+    for _, r in m.iterrows():
+        K_c = float(r["strike_c"])   # long call
+        K_p = float(r["strike_p"])   # short put
+        net_credit = float(r["mid_p"]) - float(r["mid_c"])
+        # max_loss: put assignment risk (capital-at-risk = K_p − net_credit)
+        max_loss = max(0.01, K_p - net_credit)
+        # Cap max_profit at 3× max_loss for ranking (upside is unbounded)
+        max_profit = 3 * max_loss
+        # Upside breakeven: where the long call covers the net debit (if any)
+        if net_credit >= 0:
+            be_upper = K_c - net_credit
+        else:
+            be_upper = K_c + abs(net_credit)
+        dte = int(r["dte"])
+        T = _T(dte)
+        iv_c = float(r["iv_c"])
+        iv_p = float(r["iv_p"])
+        pop = prob_above(spot, be_upper, T, iv_c)
+        pop = min(max(pop, 0.0), 1.0)
+
+        legs = [
+            {"type": "call", "strike": K_c, "qty": +1,
+             "entry_mid": float(r["mid_c"]), "iv": iv_c},
+            {"type": "put",  "strike": K_p, "qty": -1,
+             "entry_mid": float(r["mid_p"]), "iv": iv_p},
+        ]
+        g = _spread_greeks(legs, spot, T)
+        rows.append({
+            "strategy": "Risk Reversal", "expiration": r["expiration"],
+            "dte": dte, "spot": spot,
+            "short_strike": K_p, "long_strike": K_c,
+            "short_type": "put", "long_type": "call",
+            "short_mid": float(r["mid_p"]), "long_mid": float(r["mid_c"]),
+            "short_iv": iv_p, "long_iv": iv_c,
+            "net_credit": net_credit,
+            "max_profit": max_profit, "max_loss": max_loss,
+            "risk_reward": max_profit / max_loss,
+            "pop": pop,
+            "ann_yield_pct": max_profit / max_loss * (365 / dte) * 100,
+            "breakeven1": be_upper, "breakeven2": float("nan"),
+            "short_iv_excess": float(r.get("iv_excess_p", 0.0)),
+            "short_oi": int(r["open_interest_p"]),
+            "long_oi": int(r["open_interest_c"]),
+            **g,
+        })
+    return _finalise(rows, spot, earnings_dates or [])
+
+
 # ── Master scan ───────────────────────────────────────────────────────────────
 
 _BUILDERS = {
-    "Bull Put Spread":     build_bull_put_spreads,
-    "Bear Call Spread":    build_bear_call_spreads,
-    "Bull Call Spread":    build_bull_call_spreads,
-    "Bear Put Spread":     build_bear_put_spreads,
-    "Iron Condor":         build_iron_condors,
-    "Iron Butterfly":      build_iron_butterflies,
-    "Jade Lizard":         build_jade_lizards,
-    "Calendar / Diagonal": build_calendar_spreads,
-    "Ratio Spread (1×2)":  build_ratio_spreads,
+    "Bull Put Spread":        build_bull_put_spreads,
+    "Bear Call Spread":       build_bear_call_spreads,
+    "Bull Call Spread":       build_bull_call_spreads,
+    "Bear Put Spread":        build_bear_put_spreads,
+    "Jade Lizard":            build_jade_lizards,
+    "Risk Reversal":          build_risk_reversals,
+    "Iron Condor":            build_iron_condors,
+    "Iron Butterfly":         build_iron_butterflies,
+    "Broken-Wing Butterfly":  build_iron_butterflies,   # same builder, different label per row
+    "Calendar / Diagonal":    build_calendar_spreads,
+    "Ratio Spread (1×2)":     build_ratio_spreads,
+    "Long Straddle":          build_long_straddles,
+    "Long Strangle":          build_long_strangles,
 }
 
 
@@ -959,26 +1232,51 @@ def scan_spreads(
     only_positive_vega: bool = False,
     hide_earnings: bool = False,
     earnings_dates: list | None = None,
-) -> pd.DataFrame:
+    *,
+    max_abs_delta: float = 1.0,
+    width_mode: str = "dollar",
+) -> tuple[pd.DataFrame, list[str]]:
+    """Run selected strategy builders. Returns (combined_df, errors)."""
+    errors: list[str] = []
+
+    # Width-mode conversion: percent → dollars, once
+    if width_mode == "percent" and not df.empty:
+        spot = float(df["spot"].iloc[0])
+        min_width = min_width * spot / 100
+        max_width = max_width * spot / 100
+
+    # De-duplicate builders so "Iron Butterfly" + "Broken-Wing Butterfly"
+    # don't both invoke build_iron_butterflies. We track which builder
+    # callables have already run and filter rows by the selected labels
+    # at the end.
+    seen_builders: set = set()
     parts = []
     for name in strategies:
         fn = _BUILDERS.get(name)
         if fn is None:
             continue
+        if fn in seen_builders:
+            continue
+        seen_builders.add(fn)
         try:
             result = fn(df, min_dte, max_dte, min_width, max_width,
                         min_oi, earnings_dates)
             if not result.empty:
                 parts.append(result)
-        except Exception:
-            import traceback
-            traceback.print_exc()
+        except Exception as exc:
+            errors.append(f"{name}: {type(exc).__name__}: {exc}")
 
     if not parts:
-        return pd.DataFrame(columns=SPREAD_COLS)
+        return pd.DataFrame(columns=SPREAD_COLS), errors
 
     combined = pd.concat(parts, ignore_index=True)
+
+    # Keep only rows whose label was actually selected (handles the
+    # Iron Butterfly / Broken-Wing case where one builder emits both)
+    combined = combined[combined["strategy"].isin(strategies)]
+
     combined = combined[combined["pop"] >= min_pop]
+    combined = combined[combined["net_delta"].abs() <= max_abs_delta]
 
     if only_positive_theta:
         combined = combined[combined["positive_theta"]]
@@ -997,4 +1295,4 @@ def scan_spreads(
     if sort_col in combined.columns:
         combined = combined.sort_values(sort_col, ascending=False)
 
-    return combined.reset_index(drop=True)
+    return combined.reset_index(drop=True), errors

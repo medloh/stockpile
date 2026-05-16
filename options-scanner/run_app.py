@@ -1467,62 +1467,113 @@ def _show_spreads_table(sub: pd.DataFrame, strategy_name: str,
     return selected_rows[0] if selected_rows else None
 
 
-def _tab_spreads() -> None:
-    """Streamlit UI for the multi-leg spread scanner."""
-    from spreads import scan_spreads, STRATEGY_NAMES as _STRAT_NAMES
+def _render_spreads_view(
+    *,
+    key_prefix: str,
+    tab_label: str,
+    available_strategies: list[str],
+    default_strategies: list[str],
+    default_min_dte: int,
+    default_max_dte: int,
+    default_min_pop_pct: int,
+    default_sort_by: str,
+    session_key: str,
+    include_delta_filter: bool = False,
+    default_max_abs_delta: float = 1.0,
+) -> None:
+    """Shared controls + scan + results rendering for all spread tabs."""
+    from spreads import scan_spreads
 
     # ── Controls ──────────────────────────────────────────────────────────────
     with st.container(border=True):
         tc, _ = st.columns([1, 5])
         with tc:
-            ticker = st.text_input("Ticker", "AAPL", key="sp_ticker")
+            ticker = st.text_input("Ticker", "AAPL", key=f"{key_prefix}_ticker")
+
+    # Width-mode toggle determines $ vs % defaults dynamically
+    width_mode_label = st.radio(
+        "Width units", ["$", "% of spot"],
+        horizontal=True, key=f"{key_prefix}_width_mode",
+    )
+    width_mode = "percent" if "%" in width_mode_label else "dollar"
+    if width_mode == "percent":
+        min_w_default, max_w_default = 0.5, 5.0
+        min_w_step, max_w_step = 0.1, 0.5
+        min_w_label = "Min Width (%)"
+        max_w_label = "Max Width (%)"
+    else:
+        min_w_default, max_w_default = 5.0, 25.0
+        min_w_step, max_w_step = 0.5, 1.0
+        min_w_label = "Min Width ($)"
+        max_w_label = "Max Width ($)"
 
     with st.container(border=True):
         d1, d2, w1, w2, oi_col = st.columns([1, 1, 1, 1, 1])
         with d1:
-            min_dte = st.number_input("Min DTE", value=21, min_value=1, key="sp_min_dte")
+            min_dte = st.number_input("Min DTE", value=default_min_dte,
+                                      min_value=1, key=f"{key_prefix}_min_dte")
         with d2:
-            max_dte = st.number_input("Max DTE", value=60, min_value=1, key="sp_max_dte")
+            max_dte = st.number_input("Max DTE", value=default_max_dte,
+                                      min_value=1, key=f"{key_prefix}_max_dte")
         with w1:
-            min_width = st.number_input("Min Width ($)", value=5.0,
-                                        min_value=0.5, step=0.5, key="sp_min_width")
+            min_width = st.number_input(min_w_label, value=min_w_default,
+                                        min_value=0.1, step=min_w_step,
+                                        key=f"{key_prefix}_min_width")
         with w2:
-            max_width = st.number_input("Max Width ($)", value=25.0,
-                                        min_value=1.0, step=1.0, key="sp_max_width")
+            max_width = st.number_input(max_w_label, value=max_w_default,
+                                        min_value=0.1, step=max_w_step,
+                                        key=f"{key_prefix}_max_width")
         with oi_col:
             min_oi = st.number_input("Min OI (each leg)", value=10,
-                                     min_value=0, key="sp_min_oi")
+                                     min_value=0, key=f"{key_prefix}_min_oi")
 
     with st.container(border=True):
+        # Pre-filter the default list to the strategies actually available
+        effective_default = [s for s in default_strategies if s in available_strategies]
         selected_strategies = st.multiselect(
             "Strategies to scan",
-            options=_STRAT_NAMES,
-            default=["Bull Put Spread", "Bear Call Spread", "Iron Condor"],
-            key="sp_strategies",
+            options=available_strategies,
+            default=effective_default,
+            key=f"{key_prefix}_strategies",
+        )
+
+    # Delta-neutral slider (Neutral tab only)
+    max_abs_delta = 1.0
+    if include_delta_filter:
+        max_abs_delta = st.slider(
+            "Max |Δ| (delta-neutrality)",
+            min_value=0.05, max_value=1.00,
+            value=default_max_abs_delta, step=0.05,
+            key=f"{key_prefix}_max_delta",
+            help="Tighter values = more delta-neutral. 0.15 ≈ minimal "
+                 "directional bias. 1.00 disables the filter.",
         )
 
     f1, f2, f3, f4, _, f5 = st.columns([2, 1, 1, 1, 1, 1.2], vertical_alignment="bottom")
     with f1:
         min_pop_pct = st.slider("Min POP %", min_value=40, max_value=90,
-                                value=60, step=5, key="sp_min_pop")
+                                value=default_min_pop_pct, step=5,
+                                key=f"{key_prefix}_min_pop")
     with f2:
         sort_by = st.selectbox("Sort by",
                                ["Risk/Reward", "POP", "Expected Value", "Ann%"],
-                               key="sp_sort_by")
+                               index=["Risk/Reward", "POP", "Expected Value", "Ann%"].index(default_sort_by),
+                               key=f"{key_prefix}_sort_by")
     with f3:
-        only_pos_theta = st.checkbox("θ > 0 only", key="sp_pos_theta")
+        only_pos_theta = st.checkbox("θ > 0 only", key=f"{key_prefix}_pos_theta")
     with f4:
-        only_pos_vega = st.checkbox("ν > 0 only", key="sp_pos_vega")
+        only_pos_vega = st.checkbox("ν > 0 only", key=f"{key_prefix}_pos_vega")
     with f5:
-        scanned = st.button("Scan Spreads", type="primary",
-                            use_container_width=True, key="sp_scan_btn")
+        scanned = st.button(f"Scan {tab_label}", type="primary",
+                            use_container_width=True,
+                            key=f"{key_prefix}_scan_btn")
 
     # ── Scan ──────────────────────────────────────────────────────────────────
     if scanned:
         ticker_clean = ticker.strip().upper()
         if not ticker_clean:
             st.error("Enter a ticker symbol.")
-            st.session_state.pop("spreads_results", None)
+            st.session_state.pop(session_key, None)
             return
         if not selected_strategies:
             st.error("Select at least one strategy.")
@@ -1537,15 +1588,15 @@ def _tab_spreads() -> None:
 
         if err:
             st.error(err)
-            st.session_state.pop("spreads_results", None)
+            st.session_state.pop(session_key, None)
             return
         if df.empty:
             st.warning(f"No options found for {ticker_clean}.")
-            st.session_state.pop("spreads_results", None)
+            st.session_state.pop(session_key, None)
             return
 
         with st.spinner("Building spreads…"):
-            results_df = scan_spreads(
+            results_df, errors = scan_spreads(
                 df,
                 strategies=selected_strategies,
                 min_dte=int(min_dte),
@@ -1558,23 +1609,29 @@ def _tab_spreads() -> None:
                 only_positive_theta=only_pos_theta,
                 only_positive_vega=only_pos_vega,
                 earnings_dates=earnings_dates,
+                max_abs_delta=max_abs_delta,
+                width_mode=width_mode,
             )
 
-        st.session_state["spreads_results"] = {
+        st.session_state[session_key] = {
             "ticker": ticker_clean,
             "spot": float(df["spot"].iloc[0]),
             "earnings_dates": earnings_dates,
             "df": results_df,
+            "errors": errors,
             "selected_strategies": selected_strategies,
             "min_pop_pct": min_pop_pct,
+            "max_abs_delta": max_abs_delta,
         }
 
     # ── Display ───────────────────────────────────────────────────────────────
-    res = st.session_state.get("spreads_results")
+    res = st.session_state.get(session_key)
     if not res:
         return
 
-    ticker_r = res["ticker"]
+    for err in res.get("errors", []):
+        st.warning(f"Builder failed — {err}")
+
     spot = res["spot"]
     df_r = res["df"]
 
@@ -1592,8 +1649,11 @@ def _tab_spreads() -> None:
     st.divider()
 
     if df_r.empty:
-        st.info(f"No spreads met the filters (POP ≥ {res['min_pop_pct']}%). "
-                "Try widening the spread width, lowering Min POP, or selecting more strategies.")
+        delta_hint = (f", |Δ| ≤ {res['max_abs_delta']:.2f}"
+                      if include_delta_filter else "")
+        st.info(f"No spreads met the filters (POP ≥ {res['min_pop_pct']}%"
+                f"{delta_hint}). Try widening the spread width, lowering "
+                "Min POP, or selecting more strategies.")
         return
 
     for strategy_name in res["selected_strategies"]:
@@ -1608,6 +1668,14 @@ def _tab_spreads() -> None:
             if has_theta_vega:
                 st.caption("⭐ **Green-bordered rows** = positive theta AND vega — "
                            "earns time decay and benefits from rising IV.")
+            if strategy_name == "Risk Reversal":
+                st.caption("⚠ Max loss assumes put assignment "
+                           "(capital-at-risk = put strike − net credit). "
+                           "Theoretical upside is unbounded; max profit is "
+                           "capped at 3× max loss for ranking.")
+            if strategy_name in ("Long Straddle", "Long Strangle"):
+                st.caption("ℹ Max profit is capped at 3× debit for ranking — "
+                           "actual upside is unbounded.")
             selected_idx = _show_spreads_table(sub, strategy_name, spot)
 
             if selected_idx is not None and selected_idx < len(sub):
@@ -1644,6 +1712,53 @@ def _tab_spreads() -> None:
 | Yellow fill | POP ≥ 55% and R/R ≥ 0.10 — moderate probability. |
 | Orange Earn cell | Earnings before expiration — IV may spike unpredictably. |
 """)
+
+
+def _tab_spreads() -> None:
+    """Power-user view — all 13 spread strategies available."""
+    from spreads import STRATEGY_NAMES
+    _render_spreads_view(
+        key_prefix="sp",
+        tab_label="Spreads",
+        available_strategies=STRATEGY_NAMES,
+        default_strategies=["Bull Put Spread", "Bear Call Spread", "Iron Condor"],
+        default_min_dte=21, default_max_dte=60,
+        default_min_pop_pct=60,
+        default_sort_by="Risk/Reward",
+        session_key="spreads_results",
+    )
+
+
+def _tab_directional() -> None:
+    """Bullish / bearish strategies only."""
+    from spreads import DIRECTIONAL_STRATEGIES
+    _render_spreads_view(
+        key_prefix="dir",
+        tab_label="Directional",
+        available_strategies=DIRECTIONAL_STRATEGIES,
+        default_strategies=["Bull Put Spread", "Bear Call Spread"],
+        default_min_dte=21, default_max_dte=60,
+        default_min_pop_pct=60,
+        default_sort_by="Risk/Reward",
+        session_key="directional_results",
+    )
+
+
+def _tab_neutral() -> None:
+    """Range-bound / delta-neutral strategies with a Max |Δ| slider."""
+    from spreads import NEUTRAL_STRATEGIES
+    _render_spreads_view(
+        key_prefix="nu",
+        tab_label="Neutral",
+        available_strategies=NEUTRAL_STRATEGIES,
+        default_strategies=["Iron Condor", "Calendar / Diagonal", "Long Strangle"],
+        default_min_dte=30, default_max_dte=180,
+        default_min_pop_pct=55,
+        default_sort_by="Expected Value",
+        session_key="neutral_results",
+        include_delta_filter=True,
+        default_max_abs_delta=0.15,
+    )
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -1802,7 +1917,9 @@ with st.sidebar:
     )
 _apply_theme(theme_choice)
 
-tab_single, tab_portfolio, tab_spreads = st.tabs(["Single Ticker", "Portfolio", "Spreads"])
+tab_single, tab_portfolio, tab_spreads, tab_directional, tab_neutral = st.tabs(
+    ["Single Ticker", "Portfolio", "Spreads", "Directional", "Neutral"]
+)
 
 with tab_single:
     _tab_single()
@@ -1812,3 +1929,9 @@ with tab_portfolio:
 
 with tab_spreads:
     _tab_spreads()
+
+with tab_directional:
+    _tab_directional()
+
+with tab_neutral:
+    _tab_neutral()

@@ -26,7 +26,7 @@ For repo-wide setup (`uv sync`, etc.) see the
 uv run streamlit run options-scanner/run_app.py
 ```
 
-A browser tab opens at `http://localhost:8501` with two tabs:
+A browser tab opens at `http://localhost:8501` with five tabs:
 
 - **Single Ticker** — type a symbol, pick Calls/Puts/Both and Sell/Buy,
   hit Scan. You get a volatility-surface chart with top picks
@@ -39,8 +39,18 @@ A browser tab opens at `http://localhost:8501` with two tabs:
   Scan Portfolio. Each position gets its own chart and table in a
   collapsible section. The validator runs automatically on upload and
   shows any problems before you scan.
+- **Spreads** — power-user view of 13 multi-leg strategies ranked by
+  risk/reward subject to a POP threshold. Click a row to see the
+  payoff diagram (at-expiry + current value).
+- **Directional** — bullish/bearish strategies only (verticals,
+  jade lizard, risk reversal).
+- **Neutral** — range-bound and delta-neutral strategies with a
+  Max \|Δ\| slider for income hunting on long-DTE underlyings.
 
-Both tabs offer a Download HTML Report button.
+See [SPREADS.md](SPREADS.md) for the full strategy catalog, column
+reference, POP math, and caveats.
+
+Single Ticker and Portfolio tabs offer a Download HTML Report button.
 
 ### What's actually running at localhost:8501
 
