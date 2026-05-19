@@ -777,11 +777,37 @@ def _show_gex_chart(df: pd.DataFrame, spot: float,
             "Price above this level tends to be more volatile."
         ))
 
-    x_min = min(float(gex["strike"].min()), spot) * 0.97
-    x_max = max(float(gex["strike"].max()), spot) * 1.03
-    y_max_gex = float(gex["gex"].max())
+    # Zoom the x-axis to the strikes that actually carry GEX. Chains
+    # often include far-OTM strikes with near-zero gamma — leaving them
+    # in shrinks the meaningful bars to a sliver in the middle. Take
+    # the smallest contiguous strike range that holds ~99% of total
+    # |GEX|, ensure spot is included, then pad ~3% on each side.
+    gex_sorted_abs = gex.assign(abs_gex=gex["gex"].abs()) \
+                        .sort_values("abs_gex", ascending=False)
+    total_abs = float(gex_sorted_abs["abs_gex"].sum())
+    if total_abs > 0:
+        cum = gex_sorted_abs["abs_gex"].cumsum() / total_abs
+        core = gex_sorted_abs[cum <= 0.99]
+        if core.empty:
+            core = gex_sorted_abs.head(1)
+        core_lo = float(core["strike"].min())
+        core_hi = float(core["strike"].max())
+    else:
+        core_lo = float(gex["strike"].min())
+        core_hi = float(gex["strike"].max())
 
-    bars = alt.Chart(gex).mark_bar(opacity=0.85).encode(
+    x_min = min(core_lo, spot) * 0.97
+    x_max = max(core_hi, spot) * 1.03
+
+    # Trim the dataframe to the zoom range so bars rescale to fill the
+    # chart width (Altair's `scale=domain=` alone just clips off-screen
+    # bars without expanding the in-range ones).
+    gex_zoomed = gex[(gex["strike"] >= x_min) & (gex["strike"] <= x_max)]
+    if gex_zoomed.empty:
+        gex_zoomed = gex
+    y_max_gex = float(gex_zoomed["gex"].max())
+
+    bars = alt.Chart(gex_zoomed).mark_bar(opacity=0.85).encode(
         x=alt.X("strike:Q", title="Strike",
                 scale=alt.Scale(domain=[x_min, x_max]),
                 axis=alt.Axis(format="$,.0f")),
@@ -1237,6 +1263,153 @@ def _tab_single() -> None:
 | Yellow cell | OI | Open interest is below 2× the minimum OI filter — limited liquidity, harder to fill at a good price. |
 | Yellow cell | Vol | Fewer than 4 contracts traded today — very thin activity. |
 """)
+
+
+# ── Tab: GEX ─────────────────────────────────────────────────────────────────
+
+def _show_gex_strikes_of_interest(df: pd.DataFrame, spot: float) -> None:
+    """Top pinning walls + amp zones by absolute net GEX.
+
+    Same per-strike GEX aggregation as `_show_gex_chart`, surfaced as
+    a ranked table for closer inspection.
+    """
+    if df.empty or "gamma" not in df.columns:
+        return
+
+    spot_sq = spot * spot
+    calls = df[df["type"] == "call"].copy()
+    puts  = df[df["type"] == "put"].copy()
+    calls["gex"] =  calls["gamma"] * calls["open_interest"] * 100 * spot_sq
+    puts["gex"]  = -puts["gamma"]  * puts["open_interest"]  * 100 * spot_sq
+
+    per_strike = (
+        pd.concat([calls[["strike", "gex", "open_interest"]],
+                   puts[["strike", "gex", "open_interest"]]])
+        .groupby("strike", as_index=False)
+        .agg({"gex": "sum", "open_interest": "sum"})
+    )
+    if per_strike.empty or per_strike["gex"].abs().sum() == 0:
+        return
+
+    top_n = 3
+    walls = per_strike[per_strike["gex"] > 0].nlargest(top_n, "gex")
+    amps  = per_strike[per_strike["gex"] < 0].nsmallest(top_n, "gex")
+
+    rows = []
+    for _, r in walls.iterrows():
+        rows.append(("Pinning wall", r["strike"], r["gex"], r["open_interest"]))
+    for _, r in amps.iterrows():
+        rows.append(("Amp zone", r["strike"], r["gex"], r["open_interest"]))
+    if not rows:
+        return
+
+    out = pd.DataFrame(rows, columns=["Tag", "Strike", "Net GEX", "Total OI"])
+    out["Dist %"] = (out["Strike"] - spot) / spot * 100.0
+    out = out[["Tag", "Strike", "Dist %", "Net GEX", "Total OI"]]
+    out = out.sort_values("Net GEX", key=lambda s: s.abs(), ascending=False)
+
+    st.subheader("Strikes of interest")
+    st.caption(
+        "**Pinning wall** — large positive dealer gamma at this "
+        "strike. Price tends to gravitate here (resistance for moves "
+        "up, support for moves down). Favorable for covered-call "
+        "strikes just below a wall.  "
+        "**Amp zone** — large negative dealer gamma. Moves through "
+        "this strike tend to accelerate; sellers should size cautiously."
+    )
+    st.dataframe(
+        out, hide_index=True, use_container_width=False,
+        column_config={
+            "Tag":      st.column_config.TextColumn(),
+            "Strike":   st.column_config.NumberColumn(format="$%.2f"),
+            "Dist %":   st.column_config.NumberColumn(format="%+.2f%%"),
+            "Net GEX":  st.column_config.NumberColumn(format="%,.0f"),
+            "Total OI": st.column_config.NumberColumn(format="%,d"),
+        },
+    )
+
+
+def _tab_gex() -> None:
+    """GEX-only scanner: fetch a near-term chain (0–60 DTE) and surface
+    dealer-gamma context (walls, amp zones, zero-gamma flip).
+
+    Diagnostic output, not a trade signal — see README's Gamma Exposure
+    section for caveats.
+    """
+    with st.container(border=True):
+        tc, sc, _ = st.columns([1, 1, 5], vertical_alignment="bottom")
+        with tc:
+            ticker = st.text_input("Ticker", "SPY", key="g_ticker")
+        with sc:
+            with st.container(key="gex_scan_btn_lift"):
+                scanned = st.button("Scan", type="primary",
+                                    use_container_width=True,
+                                    key="g_scan_btn")
+
+    st.caption(
+        "Scans the **0–60 DTE** chain across both calls and puts. "
+        "GEX is most reliable on near-term chains where OI is dense; "
+        "LEAPS GEX is too thin to interpret and is excluded."
+    )
+
+    if scanned or st.session_state.pop("_gex_rescan_trigger", False):
+        ticker_clean = ticker.strip().upper()
+        if not ticker_clean:
+            st.error("Enter a ticker symbol.")
+            st.session_state.pop("gex_results", None)
+            return
+
+        with st.spinner(f"Fetching {ticker_clean} option chain…"):
+            df, _earnings, err = _fetch_and_enrich(
+                ticker_clean, "both", 0, 60,
+                st.session_state.get("data_source", "yahoo"),
+                st.session_state.get("schwab_config"),
+            )
+        if err:
+            st.error(err)
+            st.session_state.pop("gex_results", None)
+            return
+        if df.empty:
+            st.warning(
+                f"No options found for {ticker_clean} in the 0–60 DTE window."
+            )
+            st.session_state.pop("gex_results", None)
+            return
+
+        st.session_state["scan_ts"] = datetime.now().astimezone()
+        st.session_state["scan_provider"] = st.session_state.get(
+            "data_source", "yahoo"
+        )
+        st.session_state["gex_results"] = {
+            "ticker": ticker_clean,
+            "df": df,
+        }
+
+    res = st.session_state.get("gex_results")
+    if not res:
+        return
+
+    df_r     = res["df"]
+    ticker_r = res["ticker"]
+    spot     = float(df_r["spot"].iloc[0])
+
+    st.divider()
+    m1, m2 = st.columns(2)
+    m1.metric("Spot", f"${spot:.2f}")
+    m2.metric("Expirations (0–60 DTE)", df_r["expiration"].nunique())
+    st.divider()
+
+    with st.container(key="rescan_pill_gex"):
+        if st.button(f"↻ Rescan {ticker_r}", type="primary",
+                     key="g_rescan_btn"):
+            st.session_state["_gex_rescan_trigger"] = True
+            st.rerun()
+
+    _show_gex_chart(df_r, spot,
+                    provider=st.session_state.get("scan_provider", "yahoo"),
+                    ticker=ticker_r)
+
+    _show_gex_strikes_of_interest(df_r, spot)
 
 
 # ── Tab: Portfolio ───────────────────────────────────────────────────────────
@@ -2331,12 +2504,19 @@ with st.sidebar:
 # place this is a no-op.
 _apply_theme("Default")
 
-tab_single, tab_portfolio, tab_spreads, tab_directional, tab_neutral = st.tabs(
-    ["Single Ticker", "Portfolio", "Spreads", "Directional", "Neutral"]
+(
+    tab_single, tab_gex, tab_portfolio,
+    tab_spreads, tab_directional, tab_neutral,
+) = st.tabs(
+    ["Single Ticker", "GEX", "Portfolio",
+     "Spreads", "Directional", "Neutral"]
 )
 
 with tab_single:
     _tab_single()
+
+with tab_gex:
+    _tab_gex()
 
 with tab_portfolio:
     _tab_portfolio()
