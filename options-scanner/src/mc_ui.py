@@ -36,7 +36,7 @@ from montecarlo import (
     SimulationResult,
     run_simulation,
 )
-from ui_theme import PALETTE
+from ui_theme import PALETTE, metric_card
 
 
 # ── Position builders ──────────────────────────────────────────────────────
@@ -176,38 +176,57 @@ def _cached_simulate(
 # ── Altair charts ─────────────────────────────────────────────────────────
 
 
+_CHART_HEIGHT = 300  # equal-height path chart + histogram
+
+
 def _path_chart(result: SimulationResult, position: Position) -> alt.Chart:
-    """Sampled price paths with strike + breakeven + spot reference lines."""
+    """Sampled price paths with strike + breakeven + spot reference lines.
+
+    Y-domain is pinned to include the spot, every strike, and the 1st/99th
+    percentile of all simulated paths — so the strike-line never floats off
+    the chart even when far OTM.
+    """
     spot = position.spot
     n_sample = result.path_sample.shape[0]
     n_days = result.path_sample.shape[1]
-    # Long-form dataframe for Altair.
     df = pd.DataFrame({
         "day":   np.tile(result.days, n_sample),
         "spot":  result.path_sample.flatten(),
         "path":  np.repeat(np.arange(n_sample), n_days),
     })
+
+    # Y-domain: include spot, every option strike, and 1/99 path percentiles.
+    strikes = [leg.strike for leg in position.legs if leg.opt_type != "stock"]
+    p_lo, p_hi = float(np.percentile(result.path_sample, 1)), float(np.percentile(result.path_sample, 99))
+    y_min = min([p_lo, spot] + strikes) * 0.96
+    y_max = max([p_hi, spot] + strikes) * 1.04
+
     paths_layer = (
         alt.Chart(df)
-        .mark_line(opacity=0.10, color=PALETTE["primary"])
+        .mark_line(opacity=0.08, color=PALETTE["primary"])
         .encode(x=alt.X("day:Q", title="Days from today"),
-                y=alt.Y("spot:Q", title="Underlying ($)"),
+                y=alt.Y("spot:Q", title="Underlying ($)",
+                        scale=alt.Scale(domain=[y_min, y_max], nice=False)),
                 detail="path:N")
     )
 
-    # Reference lines: current spot, strikes, breakeven (if computable).
+    # Reference lines: current spot, strikes, breakeven (only when meaningful).
     refs: list[dict] = [{"y": spot, "label": f"Spot ${spot:.2f}",
-                         "color": PALETTE["text"]}]
+                         "color": PALETTE["ink_1"]}]
     for leg in position.legs:
         if leg.opt_type != "stock":
             refs.append({"y": leg.strike,
                          "label": f"{leg.side[:1].upper()} {leg.opt_type[0].upper()} ${leg.strike:.0f}",
-                         "color": PALETTE["muted_fg"]})
+                         "color": PALETTE["ink_3"]})
+    # Suppress the breakeven line when the engine's bin-based estimate is
+    # noisy (extreme one-sided distributions or near-zero values).
     bk_pct = result.metrics["breakeven_move_pct"]
-    if bk_pct != 0.0:
+    if 0.3 < abs(bk_pct) < 100.0:
         be_spot = spot * (1.0 + bk_pct / 100.0)
-        refs.append({"y": be_spot, "label": f"BE ${be_spot:.2f}",
-                     "color": PALETTE["accent"]})
+        # Only draw if BE is inside the visible Y-domain.
+        if y_min <= be_spot <= y_max:
+            refs.append({"y": be_spot, "label": f"BE ${be_spot:.2f}",
+                         "color": PALETTE["accent"]})
 
     ref_df = pd.DataFrame(refs)
     ref_layer = (
@@ -218,13 +237,14 @@ def _path_chart(result: SimulationResult, position: Position) -> alt.Chart:
     )
     label_layer = (
         alt.Chart(ref_df)
-        .mark_text(align="left", dx=6, dy=-5, fontSize=11)
+        .mark_text(align="left", dx=6, dy=-5, fontSize=11, fontWeight=500)
         .encode(y="y:Q",
-                x=alt.value(8),
+                x=alt.value(10),
                 text="label:N",
                 color=alt.Color("color:N", scale=None, legend=None))
     )
-    return (paths_layer + ref_layer + label_layer).properties(height=260)
+    return ((paths_layer + ref_layer + label_layer)
+            .properties(height=_CHART_HEIGHT, title="Simulated price paths"))
 
 
 def _pnl_histogram(result: SimulationResult) -> alt.Chart:
@@ -253,9 +273,9 @@ def _pnl_histogram(result: SimulationResult) -> alt.Chart:
         {"x": float(np.mean(pnl)),   "label": f"mean ${np.mean(pnl):+.0f}",
          "color": PALETTE["accent"]},
         {"x": float(np.median(pnl)), "label": f"median ${np.median(pnl):+.0f}",
-         "color": PALETTE["text"]},
+         "color": PALETTE["ink_1"]},
         {"x": 0.0,                   "label": "breakeven",
-         "color": PALETTE["muted_fg"]},
+         "color": PALETTE["ink_3"]},
     ])
     rules = (
         alt.Chart(refs)
@@ -265,11 +285,12 @@ def _pnl_histogram(result: SimulationResult) -> alt.Chart:
     )
     labels = (
         alt.Chart(refs)
-        .mark_text(align="left", dx=5, dy=-2, fontSize=10)
-        .encode(x="x:Q", y=alt.value(8), text="label:N",
+        .mark_text(align="left", dx=5, dy=-2, fontSize=10, fontWeight=500)
+        .encode(x="x:Q", y=alt.value(10), text="label:N",
                 color=alt.Color("color:N", scale=None, legend=None))
     )
-    return (bars + rules + labels).properties(height=240)
+    return ((bars + rules + labels)
+            .properties(height=_CHART_HEIGHT, title="P&L distribution at horizon"))
 
 
 # ── Public entry point ────────────────────────────────────────────────────
@@ -294,8 +315,8 @@ def render_mc_panel(
 
     if label:
         st.markdown(
-            f"<div style='font-family: var(--osc-font-sans); font-weight: 600; "
-            f"font-size: 0.95rem; color: var(--osc-text); margin: 0 0 0.5rem 0;'>"
+            f"<div style='font-family: var(--osc-font); font-weight: 600; "
+            f"font-size: 0.95rem; color: var(--osc-fg); margin: 0 0 0.5rem 0;'>"
             f"🔬 {label}</div>",
             unsafe_allow_html=True,
         )
@@ -359,28 +380,96 @@ def render_mc_panel(
         return
 
     # ── Metric cards ───────────────────────────────────────────────────
-    m1, m2, m3, m4 = st.columns(4)
+    # Two rows of 4 cards. Row 1 = headline metrics (POP, EV, CVaR, BE move).
+    # Row 2 = quant-grade metrics (VaR, Sortino, MC fair value, edge vs mkt).
     pop = result.metrics["prob_profit"]
     ev = result.metrics["expected_pnl"]
     cvar = result.metrics["cvar_5pct"]
+    var5 = result.metrics["var_5pct"]
+    sortino = result.metrics["sortino"]
     bk = result.metrics["breakeven_move_pct"]
-    pop_tone = "▲" if pop >= 0.5 else "▼"
-    ev_sign = "+" if ev >= 0 else ""
-    bk_sign = "+" if bk >= 0 else ""
+    fair = result.metrics["mc_fair_value"]
+    edge = result.metrics["edge_vs_market"]
+    fair_se = result.metrics["mc_fair_value_stderr"]
+
+    m1, m2, m3, m4 = st.columns(4)
     with m1:
-        st.metric("P(profit)", f"{pop * 100:.1f}%", delta=pop_tone,
-                  delta_color="normal" if pop >= 0.5 else "inverse")
+        metric_card(
+            label="P(profit)",
+            value=f"{pop * 100:.1f}%",
+            delta="▲ favorable" if pop >= 0.5 else "▼ unfavorable",
+            delta_sign="pos" if pop >= 0.5 else "neg",
+        )
     with m2:
-        st.metric("Expected P&L", f"${ev_sign}{ev:,.0f}")
+        ev_sign = "+" if ev >= 0 else "−"
+        metric_card(
+            label="Expected P&L",
+            value=f"{ev_sign}${abs(ev):,.0f}",
+            delta_sign="pos" if ev >= 0 else "neg",
+        )
     with m3:
-        st.metric("CVaR (worst 5%)", f"${cvar:,.0f}")
+        metric_card(
+            label="CVaR (worst 5%)",
+            value=f"−${abs(cvar):,.0f}" if cvar < 0 else f"+${cvar:,.0f}",
+            help_text="Average P&L of the worst 5% of simulated paths.",
+        )
     with m4:
-        be_label = f"{bk_sign}{bk:.1f}%" if bk != 0 else "—"
-        st.metric("Breakeven move", be_label,
-                  help="Underlying %% move needed to hit zero P&L at horizon.")
+        if 0.3 < abs(bk) < 100.0:
+            bk_sign = "+" if bk >= 0 else ""
+            be_label = f"{bk_sign}{bk:.1f}%"
+        else:
+            be_label = "—"
+        metric_card(
+            label="Breakeven move",
+            value=be_label,
+            help_text="Underlying % move from spot needed to hit zero P&L at horizon.",
+        )
+
+    # Row 2: quant-grade metrics
+    n1, n2, n3, n4 = st.columns(4)
+    with n1:
+        metric_card(
+            label="VaR (5%)",
+            value=f"−${abs(var5):,.0f}" if var5 < 0 else f"+${var5:,.0f}",
+            help_text="Threshold loss exceeded in 5% of paths. CVaR is the average beyond this; VaR ≤ CVaR by construction.",
+        )
+    with n2:
+        if sortino == float("inf"):
+            sortino_label = "∞"
+        elif abs(sortino) > 99.99:
+            sortino_label = "—"
+        else:
+            sortino_label = f"{sortino:+.2f}"
+        metric_card(
+            label="Sortino",
+            value=sortino_label,
+            delta_sign="pos" if sortino > 0 else "neg",
+            help_text="Per-position Sortino: expected P&L divided by downside-only standard deviation. Asymmetric ratio appropriate for options.",
+        )
+    with n3:
+        fair_sign = "+" if fair >= 0 else "−"
+        metric_card(
+            label="MC fair value",
+            value=f"{fair_sign}${abs(fair):,.0f}",
+            help_text=f"Discounted expected payoff (the simulation's fair price). Std error ≈ ±${fair_se:,.0f}.",
+        )
+    with n4:
+        edge_sign = "+" if edge >= 0 else "−"
+        # Edge is the headline "is this a good trade?" answer.
+        # Positive: opened at a price better than the simulation's fair value.
+        metric_card(
+            label="Edge vs market",
+            value=f"{edge_sign}${abs(edge):,.0f}",
+            delta="▲ rich" if edge >= 0 else "▼ cheap",
+            delta_sign="pos" if edge >= 0 else "neg",
+            help_text="MC fair value minus your open cost. Positive = you got a better-than-fair price; negative = you overpaid relative to the simulation.",
+        )
 
     # ── Charts ─────────────────────────────────────────────────────────
-    col_paths, col_hist = st.columns([3, 2])
+    # Equal-width columns + equal heights so the two panels visually bottom-
+    # align. The path chart has the wider visual surface area anyway via
+    # its denser line ink; equal widths keep the page rhythm consistent.
+    col_paths, col_hist = st.columns(2)
     with col_paths:
         st.altair_chart(_path_chart(result, position), use_container_width=True)
     with col_hist:

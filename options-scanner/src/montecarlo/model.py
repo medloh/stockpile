@@ -71,16 +71,36 @@ def generate_paths(
     log_drift = (rf + drift - 0.5 * vol * vol) * dt
     log_sigma = vol * np.sqrt(dt)
 
-    # Generate standard normal shocks for the diffusion component.
-    shocks = rng.standard_normal(size=(n_paths, n_days)) if n_days > 0 else np.empty((n_paths, 0))
+    # Antithetic variates: generate n_paths/2 random shocks, then pair each
+    # with its negation. The averaged estimate has 30-50% lower variance for
+    # smooth payoffs (calls, puts, verticals). For odd n_paths the last path
+    # is independent. Reference: Glasserman, "Monte Carlo Methods in
+    # Financial Engineering", §4.2.
+    if n_days > 0:
+        half = n_paths // 2
+        z_half = rng.standard_normal(size=(half, n_days))
+        if 2 * half == n_paths:
+            shocks = np.vstack([z_half, -z_half])
+        else:
+            z_extra = rng.standard_normal(size=(1, n_days))
+            shocks = np.vstack([z_half, -z_half, z_extra])
+    else:
+        shocks = np.empty((n_paths, 0))
     log_steps = log_drift + log_sigma * shocks
 
-    # Earnings jumps: add an independent shock on each earnings day.
+    # Earnings jumps: add an independent shock on each earnings day. We
+    # also apply antithetic variates to the jump component so the
+    # variance-reduction property propagates through earnings days.
     earnings_set = sorted({int(d) for d in earnings_day_offsets if 0 < int(d) <= n_days})
     if earnings_set and jump_sigma > 0:
+        half = n_paths // 2
         for d in earnings_set:
-            # Column d-1 maps to the step that lands us on day d.
-            jump_shocks = rng.standard_normal(size=n_paths) * jump_sigma
+            z_jump = rng.standard_normal(size=half) * jump_sigma
+            if 2 * half == n_paths:
+                jump_shocks = np.concatenate([z_jump, -z_jump])
+            else:
+                jump_extra = rng.standard_normal(size=1) * jump_sigma
+                jump_shocks = np.concatenate([z_jump, -z_jump, jump_extra])
             log_steps[:, d - 1] += jump_shocks
 
     # Cumulative sum then exponentiate -> price paths, prepended with spot.

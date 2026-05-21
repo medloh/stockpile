@@ -23,14 +23,20 @@ class SimulationConfig:
     Attributes:
         n_paths: Number of simulated paths. 10k is the default sweet spot for
             stable metrics (~1% std error on prob_profit) at sub-second runtime.
+            Antithetic variates roughly halve this for smooth payoffs.
         vol_source: Which vol to use as the GBM sigma.
-            "chain_iv" — IV from the position's option legs (averaged if multi-leg).
+            "chain_iv" — qty-weighted IV from the position's option legs.
             "historical_30d" — caller-supplied historical vol via vol_custom.
             "custom" — caller-supplied vol_custom.
         vol_custom: Annualized vol (decimal) used when vol_source != "chain_iv".
         drift: Additional drift premium above the risk-free rate (decimal/yr).
             Default 0 = risk-neutral.
         earnings_jumps: Whether to apply Merton-style jumps on position.earnings_dates.
+        straddle_implied_move: Optional ATM-straddle-implied % move (decimal,
+            e.g. 0.08 = 8% expected move). When provided AND earnings_jumps
+            is True, the jump sigma is calibrated to match this implied move
+            instead of the heuristic fallback. Far more accurate when you
+            can pass it; safe to omit when you can't.
         seed: RNG seed for reproducible output. None = non-deterministic.
     """
 
@@ -39,6 +45,7 @@ class SimulationConfig:
     vol_custom: float | None = None
     drift: float = 0.0
     earnings_jumps: bool = True
+    straddle_implied_move: float | None = None
     seed: int | None = None
 
 
@@ -66,15 +73,25 @@ class SimulationResult:
 
 
 def _resolve_vol(position: Position, config: SimulationConfig) -> float:
-    """Pick a sigma for the GBM diffusion based on config.vol_source."""
+    """Pick a sigma for the GBM diffusion based on config.vol_source.
+
+    For multi-leg positions with chain IV we weight by abs(qty) to reflect
+    each leg's risk contribution rather than a naive average. A leg with
+    10 contracts shouldn't be down-weighted by leg-count when paired with
+    a single hedge contract. This makes a noticeable difference for PMCC
+    (long stock = qty 100 mapped to 1 contract-equivalent + 1 short call).
+    """
     if config.vol_source == "chain_iv":
-        ivs = [leg.iv for leg in position.legs if leg.iv is not None and leg.iv > 0]
-        if not ivs:
+        items = [(leg.iv, abs(leg.qty)) for leg in position.legs
+                 if leg.iv is not None and leg.iv > 0 and leg.opt_type != "stock"]
+        if not items:
             raise ValueError(
-                "vol_source='chain_iv' requested but no leg has a positive IV. "
-                "Set Leg.iv on at least one option leg or use vol_source='custom'."
+                "vol_source='chain_iv' requested but no option leg has a "
+                "positive IV. Set Leg.iv on at least one option leg or use "
+                "vol_source='custom'."
             )
-        return float(np.mean(ivs))
+        ivs, weights = zip(*items)
+        return float(np.average(ivs, weights=weights))
     if config.vol_source in ("historical_30d", "custom"):
         if config.vol_custom is None or config.vol_custom <= 0:
             raise ValueError(
@@ -87,17 +104,29 @@ def _resolve_vol(position: Position, config: SimulationConfig) -> float:
 def _resolve_jump_sigma(position: Position, config: SimulationConfig) -> float:
     """Pick the per-earnings-event jump sigma.
 
-    Heuristic: derive from average leg IV scaled by sqrt(days-to-earnings),
-    bounded to [0.03, 0.20]. Falls back to 0.06 when no IV is available.
-    The straddle-implied move would be a more rigorous source but requires
-    pricing data we don't have at engine time.
+    Calibration cascade, best to worst:
+      1. If `config.straddle_implied_move` is set, use it directly. The
+         ATM straddle's implied % move is the market's own estimate of
+         the post-earnings one-sigma move, so jump_sigma = straddle_move.
+         This is the standard quant calibration — see Resonanz Capital's
+         "Options Straddles And Earnings Move Estimates" and Merton (1976).
+      2. Otherwise, derive a rough proxy from the position's average IV.
+         An IV regime of 60% implies a ~3.8%/day vol; we use ~3-4x that
+         for the binary-event scale, clamped to [3%, 25%]. Crude but
+         non-zero.
+      3. If no IV is available, fall back to 6% — close to the historical
+         average post-earnings move for mid/large-cap US equities.
     """
+    if config.straddle_implied_move is not None and config.straddle_implied_move > 0:
+        # Clamp to a sane range — very illiquid tickers can imply pathological
+        # moves; very liquid ones can imply near-zero (which would suppress
+        # the jump entirely, which is wrong).
+        return float(max(0.02, min(0.40, config.straddle_implied_move)))
     ivs = [leg.iv for leg in position.legs if leg.iv is not None and leg.iv > 0]
     if not ivs:
         return 0.06
     avg_iv = float(np.mean(ivs))
-    # Loose proxy: ~1-day vol of the IV regime, floored/capped.
-    return float(max(0.03, min(0.20, avg_iv / np.sqrt(TRADING_DAYS_PER_YEAR) * 5.0)))
+    return float(max(0.03, min(0.25, avg_iv / np.sqrt(TRADING_DAYS_PER_YEAR) * 4.0)))
 
 
 def run_simulation(
@@ -167,6 +196,27 @@ def run_simulation(
     path_sample = paths[idx]
 
     metrics = summarize(terminal_pnl, terminal_spot, position.spot)
+    # ── MC fair value & edge vs market ──────────────────────────────────
+    # MC fair value = mean of discounted terminal payoffs (excluding the
+    # open-cost offset). Edge vs market = how much the market price differs
+    # from this fair value, scaled to per-contract dollars. Positive edge
+    # means the position was opened at a price better than fair → favorable.
+    total_open_cost = sum(leg.open_cost for leg in position.legs)
+    discount = float(np.exp(-position.risk_free_rate * (n_days / 365.0)))
+    # Sum of terminal payoffs (positive long, negative short, sign already
+    # in evaluate_payoff because we subtract open_cost there). To recover
+    # the gross payoff for fair-value comparison, add open_cost back.
+    gross_payoff_per_path = terminal_pnl + total_open_cost
+    mc_fair_value = float(np.mean(gross_payoff_per_path) * discount)
+    edge_vs_market = mc_fair_value - total_open_cost
+    # Confidence interval on the MC fair value (std error scales 1/√n).
+    mc_fair_value_stderr = float(
+        np.std(gross_payoff_per_path) * discount / np.sqrt(config.n_paths)
+    )
+    metrics["mc_fair_value"] = mc_fair_value
+    metrics["edge_vs_market"] = edge_vs_market
+    metrics["mc_fair_value_stderr"] = mc_fair_value_stderr
+
     return SimulationResult(
         n_paths=config.n_paths,
         horizon=horizon,

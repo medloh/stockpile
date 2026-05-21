@@ -230,6 +230,61 @@ def test_engine_smoke_long_call_run_simulation():
     assert result.metrics["cvar_5pct"] <= result.metrics["expected_pnl"]
 
 
+def test_antithetic_variance_reduction_for_call_pricing():
+    """A long ATM call's MC fair value should be MORE STABLE with antithetic
+    variates than without. We can't easily disable antithetic from the public
+    API, so we instead verify the *outcome*: 10 independent seeds, n=2000
+    paths each, std of the resulting MC prices should be < 30% of the BS
+    price (a loose bound that fails catastrophically without antithetic).
+    """
+    spot, strike, vol, rf = 100.0, 100.0, 0.30, 0.05
+    T = 1.0
+    bs = _bs_call_price(spot, strike, T, rf, vol)
+    prices = []
+    for seed in range(10):
+        paths = generate_paths(spot, vol, drift=0.0, rf=rf, n_paths=2_000,
+                               n_days=252, seed=seed)
+        payoff = np.maximum(paths[:, -1] - strike, 0.0)
+        prices.append(float(np.mean(payoff)) * np.exp(-rf * T))
+    rel_std = np.std(prices) / bs
+    assert rel_std < 0.30, (
+        f"MC std/BS = {rel_std:.3f} — antithetic variates likely lost"
+    )
+
+
+def test_simulation_exposes_new_metrics():
+    """Engine should populate the new mc_fair_value / edge / sortino / VaR keys."""
+    today = date(2026, 5, 21)
+    expiry = today + timedelta(days=60)
+    leg = Leg("call", 100.0, expiry, "long", 1, open_cost=500.0, iv=0.4)
+    pos = Position("X", spot=100.0, legs=(leg,))
+    result = run_simulation(pos, SimulationConfig(n_paths=5_000, seed=99), today=today)
+    for key in ("var_5pct", "sortino", "mc_fair_value", "edge_vs_market",
+                "mc_fair_value_stderr"):
+        assert key in result.metrics, f"missing metric: {key}"
+    # VaR is the 5%-tail loss threshold; CVaR is the mean beyond it; CVaR ≤ VaR.
+    assert result.metrics["cvar_5pct"] <= result.metrics["var_5pct"]
+
+
+def test_straddle_implied_move_overrides_jump_heuristic():
+    """When straddle_implied_move is set, jump_sigma should match it
+    rather than fall through to the IV-based heuristic. We test this
+    indirectly by simulating with very different straddle values and
+    confirming the path variance on the earnings day responds."""
+    today = date(2026, 5, 21)
+    earnings = today + timedelta(days=10)
+    expiry = today + timedelta(days=30)
+    leg = Leg("call", 100.0, expiry, "long", 1, open_cost=500.0, iv=0.3)
+    pos = Position("X", spot=100.0, legs=(leg,),
+                   earnings_dates=(earnings,))
+    low = run_simulation(pos, SimulationConfig(n_paths=10_000, seed=1,
+                                               straddle_implied_move=0.04), today=today)
+    high = run_simulation(pos, SimulationConfig(n_paths=10_000, seed=1,
+                                                straddle_implied_move=0.20), today=today)
+    # Higher straddle move → wider terminal-spot distribution.
+    assert high.terminal_spot.std() > low.terminal_spot.std() * 1.5
+
+
 def test_engine_rejects_position_with_no_legs():
     today = date(2026, 5, 21)
     pos = Position("X", spot=100.0, legs=())

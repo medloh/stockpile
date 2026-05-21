@@ -84,10 +84,26 @@ def summarize(
     pop_95_low = float(np.percentile(terminal_spot, 2.5))
     pop_95_high = float(np.percentile(terminal_spot, 97.5))
 
+    # Value at Risk @ 5% — the threshold loss exceeded in 5% of paths.
+    # CVaR is the *average* beyond that threshold, so VaR ≤ CVaR by construction.
+    # Reference: Glasserman §9.
+    var_5pct = float(sorted_pnl[k - 1])
+
+    # Sortino ratio — Sharpe-analog that punishes downside only. The right
+    # ratio for option positions because payoffs are deliberately asymmetric.
+    # We compute against MAR=0 (the breakeven). Annualization is omitted
+    # because the simulation horizon is fixed; this is a per-position ratio,
+    # not a strategy ratio.
+    downside = terminal_pnl[terminal_pnl < 0]
+    downside_dev = float(np.sqrt(np.mean(downside * downside))) if downside.size > 0 else 0.0
+    sortino = (expected_pnl / downside_dev) if downside_dev > 0 else float("inf") if expected_pnl > 0 else 0.0
+
     return {
         "prob_profit": prob_profit,
         "expected_pnl": expected_pnl,
         "cvar_5pct": cvar_5pct,
+        "var_5pct": var_5pct,
+        "sortino": sortino,
         "breakeven_move_pct": breakeven_move_pct,
         "pop_95_low": pop_95_low,
         "pop_95_high": pop_95_high,
