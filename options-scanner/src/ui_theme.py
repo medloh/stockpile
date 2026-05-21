@@ -574,7 +574,7 @@ def inject_theme() -> None:
     }}
     </style>
     """
-    st.markdown(css, unsafe_allow_html=True)
+    st.html(css)
 
 
 # ── Reusable rendering helpers ──────────────────────────────────────────────

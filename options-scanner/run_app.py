@@ -2032,7 +2032,7 @@ def _tab_neutral() -> None:
 # ui_theme.py. These cover Streamlit-version-specific behaviors (rescan
 # pill, data-source pill positioning, number-input width caps) that
 # don't belong in the shared theme module.
-st.markdown(
+st.html(
     """
     <style>
     [data-testid="stDivider"] {
@@ -2105,8 +2105,7 @@ st.markdown(
         font-weight: 500;
     }
     </style>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 # Load config and seed data_source_choice into session_state BEFORE the
@@ -2131,7 +2130,7 @@ if "data_source_choice" not in st.session_state:
 # scan button per-source. The user can still tell which source is active
 # from the segmented-control selection state.
 _PRIMARY = PALETTE["primary"]
-st.markdown(
+st.html(
     f"""
     <style>
     [class*="st-key-data_source_pill"] button[aria-pressed="true"],
@@ -2147,14 +2146,13 @@ st.markdown(
         color: {_PRIMARY} !important;
     }}
     </style>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 # Brand wordmark pinned to the top header bar. Replaces the legacy
 # raster-logo overlay with a typographic mark — sharper, scales cleanly,
 # and matches the rest of the design system.
-st.markdown(
+st.html(
     """
     <style>
     .osc-wordmark-overlay {
@@ -2199,8 +2197,7 @@ st.markdown(
       <span class='osc-wm-brand'>STOCKPILE</span>
       <span class='osc-wm-suffix'>· OPTIONS SCANNER</span>
     </div>
-    """,
-    unsafe_allow_html=True,
+    """
 )
 
 # Sidebar-state observer: watches the actual sidebar element's rendered
