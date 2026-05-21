@@ -1382,20 +1382,33 @@ def _tab_single() -> None:
                      "a row to simulate.",
         )
     else:
-        # Sort df_filt by the same criterion the Top candidates table uses,
-        # so the selectbox is ordered with the strongest-signal row first.
-        # buy mode (IV-cheap): iv_excess ascending → most-below-surface first.
-        # sell mode (IV-rich): iv_excess descending → most-above-surface first.
-        # Tie-break on open_interest (higher = more liquid = better pick).
+        # Apply the EXACT same filters and ranking the "Top candidates"
+        # table uses, so the MC dropdown order matches the table order
+        # row-for-row. _show_scan_results does:
+        #   1. filter to opt_type (or both)
+        #   2. require open_interest >= min_oi AND volume >= min_vol
+        #   3. sort by iv_excess (asc if buy / desc if sell), OI tie-break
+        #   4. head(top_n)
+        # Without these filters, the auto-filled top row could be a
+        # low-liquidity option the table itself hides.
+        if mode_r in ("call", "put"):
+            df_mc_base = df_filt[df_filt["type"] == mode_r]
+        else:
+            df_mc_base = df_filt
         df_mc = (
-            df_filt.sort_values(
+            df_mc_base[
+                (df_mc_base["open_interest"] >= res["min_oi"])
+                & (df_mc_base["volume"] >= res.get("min_vol", 0))
+            ]
+            .sort_values(
                 ["iv_excess", "open_interest"],
                 ascending=[buy_r, False],
             )
+            .head(res["top_n"])
             .reset_index(drop=True)
             .copy()
         )
-        # The first row is now the auto-fill default: rank-1 from
+        # The first row is now exactly rank-1 from
         # "Top candidates — all chains" for the current scan direction.
         df_mc["_label"] = (
             df_mc.apply(lambda r: (
@@ -1407,15 +1420,24 @@ def _tab_single() -> None:
                 f"  ·  IV+pp {r.get('iv_excess', 0) * 100:+.1f}"
             ), axis=1)
         )
-        # Mark the best one so the user knows the default isn't arbitrary.
-        if len(df_mc) > 0:
-            best_signal = df_mc.iloc[0]["iv_excess"] * 100
-            best_label = df_mc.iloc[0]["_label"]
-            arrow = "▼" if buy_r else "▲"
-            st.caption(
-                f"**Strongest signal:** {arrow} {best_label}  "
-                f"(IV+pp {best_signal:+.1f}, pre-selected below)"
+        # Empty after filters → nothing to analyze. Surface the reason
+        # explicitly rather than render an empty dropdown.
+        if df_mc.empty:
+            empty_state(
+                title="No candidates pass the table's filters",
+                subtitle="Top candidates is empty for this ticker — relax "
+                         "Min OI / Min Vol on the scan, or pick a ticker "
+                         "with more option-chain liquidity.",
             )
+            return
+        # Mark the best one so the user knows the default isn't arbitrary.
+        best_signal = df_mc.iloc[0]["iv_excess"] * 100
+        best_label = df_mc.iloc[0]["_label"]
+        arrow = "▼" if buy_r else "▲"
+        st.caption(
+            f"**Strongest signal (rank-1 from Top candidates):** {arrow} {best_label}  "
+            f"(IV+pp {best_signal:+.1f}, pre-selected below)"
+        )
 
         # Side defaults from scan direction (buy=long, sell=short).
         c_pick, c_side, c_qty, c_btn = st.columns([4, 1.2, 0.8, 1])
