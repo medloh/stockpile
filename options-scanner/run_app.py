@@ -247,6 +247,36 @@ _IVPP_HELP = ("Percentage points the option's IV sits above the fitted"
               " volatility surface. Positive = richer than peers at a"
               " similar strike and DTE. Under ~3 pp is noise; 5+ pp is"
               " a genuine signal.")
+
+
+def _ivpp_help_for(buy: bool, opt_type: str = "option") -> str:
+    """Tooltip text for the IV+pp column, tailored to the user's scan.
+
+    The number's sign is interpreted opposite for sellers vs buyers — a
+    +5 pp call is great if you're SELLING it (rich premium collected)
+    and bad if you're BUYING it (overpaying). The tooltip switches
+    accordingly so the user doesn't have to remember the convention.
+    """
+    plural = {"call": "calls", "put": "puts", "both": "options"}.get(
+        opt_type.lower(), "options"
+    )
+    if buy:
+        # Buyer wants cheap → negative IV+pp.
+        return (
+            f"Percentage points the option's IV sits ABOVE (+) or BELOW (−)"
+            f" the fitted volatility surface. You're BUYING {plural} — you want"
+            f" NEGATIVE values (the option is cheap relative to its peers, so"
+            f" you pay less than fair). Look for −3 pp or lower; near 0 is"
+            f" fair value; positive means you'd be overpaying."
+        )
+    # Seller wants rich → positive IV+pp.
+    return (
+        f"Percentage points the option's IV sits ABOVE (+) or BELOW (−)"
+        f" the fitted volatility surface. You're SELLING {plural} — you want"
+        f" POSITIVE values (the option is rich relative to its peers, so you"
+        f" collect more than fair). Look for +5 pp or higher; under +3 pp is"
+        f" noise; negative means the chain isn't paying a premium."
+    )
 _VOL_HELP  = "Yellow: fewer than 4 contracts traded today — very thin activity."
 
 
@@ -308,7 +338,8 @@ def _stamp_caption() -> None:
 
 
 def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
-             min_oi: int = 0, min_vol: int = 0) -> None:
+             min_oi: int = 0, min_vol: int = 0,
+             buy: bool = False, opt_type: str = "option") -> None:
     if sub.empty:
         empty_state(
             "No matches in this chain",
@@ -363,7 +394,8 @@ def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
         "IV%":   st.column_config.NumberColumn("IV%", format="%.1f%%",
                                                width=70),
         "IV+pp": st.column_config.NumberColumn("IV+pp", format="%+.1f pp",
-                                               width=75, help=_IVPP_HELP),
+                                               width=75,
+                                               help=_ivpp_help_for(buy, opt_type)),
         "Delta": st.column_config.NumberColumn("Delta", format="%.2f",
                                                width=60),
         "Ann%":  st.column_config.NumberColumn("Ann%", format="%.1f%%",
@@ -710,7 +742,8 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
         "IV%":   st.column_config.NumberColumn("IV%", format="%.1f%%",
                                                width=70),
         "IV+pp": st.column_config.NumberColumn("IV+pp", format="%+.1f pp",
-                                               width=75, help=_IVPP_HELP),
+                                               width=75,
+                                               help=_ivpp_help_for(buy, mode)),
         "Delta": st.column_config.NumberColumn("Delta", format="%.2f",
                                                width=60),
         "Ann%":  st.column_config.NumberColumn("Ann%", format="%.1f%%",
@@ -899,7 +932,8 @@ def _show_scan_results(df: pd.DataFrame, mode: str, buy: bool,
                   & (sub["volume"] >= min_vol)].head(top_n)
         if len(to_show) > 1:
             st.subheader(type_labels[opt_type])
-        _show_df(sub, roll_close_cost, min_oi, min_vol)
+        _show_df(sub, roll_close_cost, min_oi, min_vol,
+                 buy=buy, opt_type=opt_type)
 
 
 # ── Tab: Single Ticker ───────────────────────────────────────────────────────
@@ -2369,8 +2403,15 @@ def _show_spreads_table(sub: pd.DataFrame, strategy_name: str,
                                                      help=_GREEK_HELP["θ"]),
         "ν":          st.column_config.NumberColumn("ν", format="%.3f", width="small",
                                                      help=_GREEK_HELP["ν"]),
-        "IV+pp":      st.column_config.NumberColumn("IV+pp", format="%+.1f pp", width="small",
-                                                     help=_IVPP_HELP),
+        "IV+pp":      st.column_config.NumberColumn(
+            "IV+pp", format="%+.1f pp", width="small",
+            help=(
+                "Short-leg IV residual vs the fitted surface. Spreads"
+                " here are CREDIT-leaning — positive IV+pp on the short"
+                " leg means you're collecting richer-than-fair premium"
+                " on the side you sold. Look for +3 pp or higher."
+            ),
+        ),
         "Earnings":   st.column_config.TextColumn("Earn", width="small",
                                                    help="⚠ = earnings event before expiration"),
     }
