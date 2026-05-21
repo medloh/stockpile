@@ -1267,6 +1267,58 @@ def _tab_single() -> None:
 
 # ── Tab: GEX ─────────────────────────────────────────────────────────────────
 
+def _compute_gex_summary(df: pd.DataFrame, spot: float) -> dict | None:
+    """Per-ticker GEX summary: total, regime, zero-gamma flip, and the
+    strongest pinning wall + amp zone. Same math as `_show_gex_chart`,
+    distilled to single numbers for the multi-ticker summary table.
+    """
+    if df.empty or "gamma" not in df.columns:
+        return None
+    spot_sq = spot * spot
+    calls = df[df["type"] == "call"].copy()
+    puts  = df[df["type"] == "put"].copy()
+    calls["gex"] =  calls["gamma"] * calls["open_interest"] * 100 * spot_sq
+    puts["gex"]  = -puts["gamma"]  * puts["open_interest"]  * 100 * spot_sq
+    per_strike = (
+        pd.concat([calls[["strike", "gex"]], puts[["strike", "gex"]]])
+        .groupby("strike", as_index=False)["gex"].sum()
+        .sort_values("strike")
+    )
+    if per_strike.empty or per_strike["gex"].abs().sum() == 0:
+        return None
+
+    total_gex = float(per_strike["gex"].sum())
+    cumulative = per_strike["gex"].cumsum()
+    zero_strikes = per_strike["strike"][cumulative >= 0]
+    zero_gamma = (float(zero_strikes.min())
+                  if not zero_strikes.empty else float("nan"))
+
+    walls = per_strike[per_strike["gex"] > 0]
+    amps  = per_strike[per_strike["gex"] < 0]
+    top_wall = (float(walls.loc[walls["gex"].idxmax(), "strike"])
+                if not walls.empty else None)
+    top_amp  = (float(amps.loc[amps["gex"].idxmin(), "strike"])
+                if not amps.empty else None)
+
+    return {
+        "total_gex": total_gex,
+        "regime": "Pinning" if total_gex >= 0 else "Amplifying",
+        "zero_gamma": zero_gamma,
+        "top_wall": top_wall,
+        "top_amp": top_amp,
+    }
+
+
+def _fmt_strike_with_dist(strike: float | None, spot: float) -> str:
+    """Format a strike alongside its % distance from spot — used to
+    keep the multi-ticker summary table compact (one cell per concept).
+    """
+    if strike is None or pd.isna(strike):
+        return "—"
+    dist = (strike - spot) / spot * 100.0
+    return f"${strike:,.2f} ({dist:+.1f}%)"
+
+
 def _show_gex_strikes_of_interest(df: pd.DataFrame, spot: float) -> None:
     """Top pinning walls + amp zones by absolute net GEX.
 
@@ -1330,16 +1382,30 @@ def _show_gex_strikes_of_interest(df: pd.DataFrame, spot: float) -> None:
 
 
 def _tab_gex() -> None:
-    """GEX-only scanner: fetch a near-term chain (0–60 DTE) and surface
-    dealer-gamma context (walls, amp zones, zero-gamma flip).
+    """GEX-only scanner: fetch near-term chains (0–60 DTE) for one or
+    more tickers and surface dealer-gamma context (walls, amp zones,
+    zero-gamma flip).
+
+    Multi-ticker mode shows a summary table ranked by |Total GEX|;
+    the user picks one ticker to drill into a full GEX chart and
+    strikes-of-interest table.
 
     Diagnostic output, not a trade signal — see README's Gamma Exposure
     section for caveats.
     """
     with st.container(border=True):
-        tc, sc, _ = st.columns([1, 1, 5], vertical_alignment="bottom")
+        tc, sc, _ = st.columns([2, 1, 4], vertical_alignment="bottom")
         with tc:
-            ticker = st.text_input("Ticker", "SPY", key="g_ticker")
+            tickers_input = st.text_input(
+                "Ticker(s) — comma-separated",
+                "SPY",
+                key="g_ticker",
+                help=(
+                    "One or more tickers, e.g. `SPY, QQQ, NVDA, AAPL`. "
+                    "Multi-ticker mode adds a summary table you can "
+                    "sort, then drill into one ticker for the full chart."
+                ),
+            )
         with sc:
             with st.container(key="gex_scan_btn_lift"):
                 scanned = st.button("Scan", type="primary",
@@ -1353,26 +1419,52 @@ def _tab_gex() -> None:
     )
 
     if scanned or st.session_state.pop("_gex_rescan_trigger", False):
-        ticker_clean = ticker.strip().upper()
-        if not ticker_clean:
-            st.error("Enter a ticker symbol.")
+        raw = tickers_input.strip().upper()
+        tickers = [t.strip() for t
+                   in raw.replace(";", ",").split(",")
+                   if t.strip()]
+        # Preserve user order, drop duplicates
+        seen = set()
+        tickers = [t for t in tickers
+                   if not (t in seen or seen.add(t))]
+        if not tickers:
+            st.error("Enter one or more ticker symbols.")
             st.session_state.pop("gex_results", None)
             return
 
-        with st.spinner(f"Fetching {ticker_clean} option chain…"):
+        per_ticker: dict[str, dict] = {}
+        failed: list[tuple[str, str]] = []
+        progress = st.progress(
+            0.0, text=f"Fetching {len(tickers)} ticker(s)…"
+        )
+        for i, t in enumerate(tickers, 1):
+            progress.progress(
+                i / len(tickers),
+                text=f"Fetching {t} ({i}/{len(tickers)})…",
+            )
             df, _earnings, err = _fetch_and_enrich(
-                ticker_clean, "both", 0, 60,
+                t, "both", 0, 60,
                 st.session_state.get("data_source", "yahoo"),
                 st.session_state.get("schwab_config"),
             )
-        if err:
-            st.error(err)
-            st.session_state.pop("gex_results", None)
-            return
-        if df.empty:
-            st.warning(
-                f"No options found for {ticker_clean} in the 0–60 DTE window."
-            )
+            if err:
+                failed.append((t, err))
+                continue
+            if df.empty:
+                failed.append((t, "no options in 0–60 DTE"))
+                continue
+            spot = float(df["spot"].iloc[0])
+            summary = _compute_gex_summary(df, spot)
+            if summary is None:
+                failed.append((t, "no GEX data (missing gamma/OI)"))
+                continue
+            per_ticker[t] = {"df": df, "spot": spot, **summary}
+        progress.empty()
+
+        for t, msg in failed:
+            st.warning(f"**{t}** skipped — {msg}")
+        if not per_ticker:
+            st.error("No tickers returned GEX data.")
             st.session_state.pop("gex_results", None)
             return
 
@@ -1381,33 +1473,92 @@ def _tab_gex() -> None:
             "data_source", "yahoo"
         )
         st.session_state["gex_results"] = {
-            "ticker": ticker_clean,
-            "df": df,
+            "tickers": list(per_ticker.keys()),
+            "per_ticker": per_ticker,
         }
 
     res = st.session_state.get("gex_results")
     if not res:
         return
 
-    df_r     = res["df"]
-    ticker_r = res["ticker"]
-    spot     = float(df_r["spot"].iloc[0])
+    per_ticker = res["per_ticker"]
+    if not per_ticker:
+        return
+
+    # Build summary df sorted by |Total GEX| descending so the most
+    # gamma-exposed ticker is the default drill-down pick.
+    rows = []
+    for t, info in per_ticker.items():
+        spot = info["spot"]
+        rows.append({
+            "Ticker":    t,
+            "Spot":      spot,
+            "Total GEX": info["total_gex"],
+            "Regime":    info["regime"],
+            "Zero-Γ":    _fmt_strike_with_dist(info["zero_gamma"], spot),
+            "Top Wall":  _fmt_strike_with_dist(info["top_wall"], spot),
+            "Top Amp":   _fmt_strike_with_dist(info["top_amp"], spot),
+        })
+    summary_df = pd.DataFrame(rows)
+    summary_df = (summary_df
+                  .assign(_abs=summary_df["Total GEX"].abs())
+                  .sort_values("_abs", ascending=False)
+                  .drop(columns=["_abs"])
+                  .reset_index(drop=True))
 
     st.divider()
-    m1, m2 = st.columns(2)
-    m1.metric("Spot", f"${spot:.2f}")
-    m2.metric("Expirations (0–60 DTE)", df_r["expiration"].nunique())
-    st.divider()
 
+    n = len(per_ticker)
+    rescan_label = (f"↻ Rescan {res['tickers'][0]}"
+                    if n == 1 else f"↻ Rescan ({n})")
     with st.container(key="rescan_pill_gex"):
-        if st.button(f"↻ Rescan {ticker_r}", type="primary",
-                     key="g_rescan_btn"):
+        if st.button(rescan_label, type="primary", key="g_rescan_btn"):
             st.session_state["_gex_rescan_trigger"] = True
             st.rerun()
 
+    if n > 1:
+        st.subheader("GEX summary")
+        st.caption(
+            "One row per ticker, sorted by absolute Total GEX (most "
+            "dealer-gamma exposure first). The Zero-Γ, Top Wall, and "
+            "Top Amp cells include each strike's distance from spot."
+        )
+        st.dataframe(
+            summary_df, hide_index=True, use_container_width=False,
+            column_config={
+                "Ticker":    st.column_config.TextColumn(),
+                "Spot":      st.column_config.NumberColumn(format="$%.2f"),
+                "Total GEX": st.column_config.NumberColumn(format="%,.0f"),
+                "Regime":    st.column_config.TextColumn(),
+                "Zero-Γ":    st.column_config.TextColumn(),
+                "Top Wall":  st.column_config.TextColumn(),
+                "Top Amp":   st.column_config.TextColumn(),
+            },
+        )
+
+        drill = st.selectbox(
+            "Drill into ticker",
+            summary_df["Ticker"].tolist(),
+            index=0,
+            key="g_drill",
+        )
+        st.divider()
+    else:
+        drill = res["tickers"][0]
+
+    info = per_ticker[drill]
+    df_r = info["df"]
+    spot = info["spot"]
+
+    if n == 1:
+        m1, m2 = st.columns(2)
+        m1.metric("Spot", f"${spot:.2f}")
+        m2.metric("Expirations (0–60 DTE)", df_r["expiration"].nunique())
+        st.divider()
+
     _show_gex_chart(df_r, spot,
                     provider=st.session_state.get("scan_provider", "yahoo"),
-                    ticker=ticker_r)
+                    ticker=drill)
 
     _show_gex_strikes_of_interest(df_r, spot)
 

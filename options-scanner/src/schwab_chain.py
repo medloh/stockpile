@@ -105,7 +105,11 @@ def fetch_chain_schwab(ticker: str, opt_type: str = "both",
 
                     log_m = math.log(K / spot)
                     capital = spot if side == "call" else K
-                    ann_yield = (mid / capital) * (365.0 / dte) * 100.0
+                    # 0DTE rows (same-day expiry) get clamped to 1 day
+                    # for the annualization — yield is meaningless at
+                    # this scale, but the row's gamma/OI are still
+                    # useful (GEX).
+                    ann_yield = (mid / capital) * (365.0 / max(dte, 1)) * 100.0
 
                     rows.append({
                         "type":          side,

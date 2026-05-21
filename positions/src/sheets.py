@@ -142,6 +142,9 @@ def plain_number(sheet_id, r1, c1, r2, c2):
 def date_fmt(sheet_id, r1, c1, r2, c2):
     return fmt_range(sheet_id, r1, c1, r2, c2, "DATE", "MM/DD/YYYY")
 
+def datetime_fmt(sheet_id, r1, c1, r2, c2):
+    return fmt_range(sheet_id, r1, c1, r2, c2, "DATE_TIME", "MM/DD/YY HH:MM")
+
 def right_align(sheet_id, r1, c1, r2, c2):
     return {"repeatCell": {
         "range": {"sheetId": sheet_id,
@@ -518,7 +521,7 @@ def _write_summary_row(service, tab_name, status, issues,
         new_row = [
             tab_name,
             f"='{tab_name}'!B5",                                          # B: Stock Price
-            f"='{tab_name}'!E6",                                          # C: Mkt Val
+            f"='{tab_name}'!E7",                                          # C: Mkt Val
             f"='{tab_name}'!H4",                                          # D: Stock Gain
             f"='{tab_name}'!B15" if show_calls else 0,                    # E: All Call Results
             f"='{tab_name}'!B{p+5}" if show_puts else 0,                  # F: All Put Results
@@ -534,7 +537,7 @@ def _write_summary_row(service, tab_name, status, issues,
         new_row = [
             tab_name,
             f"='{tab_name}'!B5",                                         # B: Stock Price
-            f"='{tab_name}'!E6",                                         # C: Mkt Val
+            f"='{tab_name}'!E7",                                         # C: Mkt Val
             f"='{tab_name}'!H4",                                         # D: Stock Gain
             f"='{tab_name}'!B7",                                         # E: Calls MV
             f"='{tab_name}'!E11" if show_calls else "",                  # F: Strike (calls)
@@ -547,7 +550,7 @@ def _write_summary_row(service, tab_name, status, issues,
             f"='{tab_name}'!H{p+7}" if show_puts else 0,                # M: TV Ann Yield (puts)
             f"='{tab_name}'!B{p+3}+J{row_num}" if show_puts else 0,    # N: All Put Results
             f"='{tab_name}'!B{i+1}",                                     # O: Dividends
-            f"='{tab_name}'!B6",                                         # P: Adj Cost Basis
+            f"='{tab_name}'!B4",                                         # P: Adj Cost Basis
             f"='{tab_name}'!H{i+1}",                                     # Q: Close-out Value
             f"=D{row_num}+I{row_num}+N{row_num}+O{row_num}",           # R: Overall P/L
         ]

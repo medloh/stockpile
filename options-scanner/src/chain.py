@@ -118,7 +118,10 @@ def _fetch_chain_yahoo(ticker: str, opt_type: str = "both",
                 delta = _bs_delta(spot, K, T, _RISK_FREE_RATE, iv, side)
                 gamma = _bs_gamma(spot, K, T, _RISK_FREE_RATE, iv)
                 capital = spot if side == "call" else K
-                ann_yield = (mid / capital) * (365.0 / dte) * 100.0
+                # 0DTE rows (same-day expiry) get clamped to 1 day for
+                # the annualization — yield is meaningless at this scale
+                # anyway, but the row's gamma/OI are still useful (GEX).
+                ann_yield = (mid / capital) * (365.0 / max(dte, 1)) * 100.0
 
                 rows.append({
                     "type":          side,

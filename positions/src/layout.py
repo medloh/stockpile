@@ -47,19 +47,22 @@ def _offsets(show_calls, show_puts):
 
 
 def _stock_position_rows(T, L):
+    # Avg Cost / Share sits at the top of the section (E4) so it can be
+    # compared at-a-glance with ** Adj Cost Basis / Share at B4. Shares
+    # Held moves down a row to E5. References to E5 below all mean
+    # Shares Held in the new layout.
     return [
         ["STOCK POSITION", ""],
+        ["Avg Cost / Share",
+         f"=IFERROR(-(SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L})"
+         f"+SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Sell\")*J${T}:J${L}))/E5,0)"],
         ["Shares Held",
          f"=SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*G${T}:G${L})"
          f"+SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Sell\")*G${T}:G${L})"],
-        ["Avg Cost / Share",
-         f"=IFERROR(-(SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L})"
-         f"+SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Sell\")*J${T}:J${L}))/E4,0)"],
-        ["Market Value", "=E4*B5"],
-        ["Total Invested",
-         f"=IF(E4=0,0,"
-         f"SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L})"
-         f"+SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Sell\")*J${T}:J${L}))"],
+        ["Total Invested", "=E4*E5"],
+        ["Market Value", "=E5*B5"],
+        ["Position Opened",
+         f"=IFERROR(MINIFS(A${T}:A${L},C${T}:C${L},\"Stock\",B${T}:B${L},\"Buy\"),\"\")"],
     ]
 
 
@@ -67,10 +70,10 @@ def _stock_results_rows(T, L, avg_days_formula):
     return [
         ["STOCK RESULTS", ""],
         ["Gain $",
-         f"=IF(E4=0,"
+         f"=IF(E5=0,"
          f"SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L})"
          f"+SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Sell\")*J${T}:J${L}),"
-         f"E6+E7)"],
+         f"E7-E6)"],
         ["Gain %",
          f"=IFERROR(-H4/SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L}),0)"],
         ["Total Days Held",
@@ -200,14 +203,14 @@ def build_open_sections(ticker, open_positions, last_row, avg_held_anchor=None,
 
         "A3:B8": [
             ["CURRENT VALUES", ""],
-            ["Last Updated", datetime.now().strftime("%m/%d/%y %H:%M")],
+            ["** Adj Cost Basis / Share", f"=IFERROR(-SUM(J${T}:J${L})/E5,0)"],
             ["Stock Price", ""],
-            ["** Adj Cost Basis / Share", f"=IFERROR(-SUM(J${T}:J${L})/E4,0)"],
+            ["Last Updated", datetime.now().strftime("%m/%d/%y %H:%M")],
             ["Calls Market Value", ""],
             ["Puts Market Value", ""],
         ],
 
-        "D3:E7": _stock_position_rows(T, L),
+        "D3:E8": _stock_position_rows(T, L),
         "G3:H8": _stock_results_rows(T, L, avg_days_formula),
 
         f"A{i}:B{i+4}": _income_rows(T, L, i, p, show_calls, show_puts),
@@ -217,10 +220,10 @@ def build_open_sections(ticker, open_positions, last_row, avg_held_anchor=None,
             ["RETURNS", ""],
             ["Amount Invested",
              f"=-SUMPRODUCT((C${T}:C${L}=\"Stock\")*(B${T}:B${L}=\"Buy\")*J${T}:J${L})"],
-            ["Close-out Value", "=E6+B7+B8"],
+            ["Close-out Value", "=E7+B7+B8"],
             ["Total Income", f"=E{i+5}-E{i+1}"],
             ["Ann Yield on Invested Capital",
-             f"=IFERROR(-E{i+5}/E7*(365/H7),0)"],
+             f"=IFERROR(E{i+5}/E6*(365/H7),0)"],
             ["Ann Yield on Close-out Value",
              f"=IFERROR(E{i+5}/H{i+2}*(365/H7),0)"],
         ],
@@ -306,12 +309,12 @@ def build_closed_sections(ticker, open_positions, last_row,
 
         "A3:B6": [
             ["CURRENT VALUES", ""],
-            ["Last Updated", datetime.now().strftime("%m/%d/%y %H:%M")],
+            ["** Adj Cost Basis / Share", f"=IFERROR(-SUM(J${T}:J${L})/E5,0)"],
             ["Stock Price", ""],
-            ["** Adj Cost Basis / Share", f"=IFERROR(-SUM(J${T}:J${L})/E4,0)"],
+            ["Last Updated", datetime.now().strftime("%m/%d/%y %H:%M")],
         ],
 
-        "D3:E7": _stock_position_rows(T, L),
+        "D3:E8": _stock_position_rows(T, L),
         "G3:H8": _stock_results_rows(T, L, avg_days_formula),
 
         f"A{i}:B{i+4}": _income_rows(T, L, i, p, show_calls, show_puts),
