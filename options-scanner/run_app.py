@@ -31,6 +31,7 @@ from ui_theme import (
     section_header,
     wordmark,
 )
+from mc_ui import LegSpec, position_from_chain_row, position_from_legs, render_mc_panel
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -1215,6 +1216,92 @@ def _tab_single() -> None:
                        res["min_oi"], res["top_n"],
                        res.get("min_vol", 0))
 
+    # ── Monte Carlo trade analyzer ────────────────────────────────────────
+    # Pick any candidate from the ranked table above and simulate its
+    # full P&L distribution. Engine: 10k GBM paths with optional
+    # earnings jumps. Pure NumPy — sub-second for typical 30-90 DTE.
+    section_header(
+        "Monte Carlo Trade Analyzer",
+        eyebrow="DECISION SUPPORT",
+        subtitle="Simulate the P&L distribution of any contract above. "
+                 "P(profit), expected value, worst-5% CVaR, breakeven move.",
+    )
+    if df_filt.empty:
+        empty_state(
+            title="Nothing to analyze",
+            subtitle="Run a scan to populate the candidate table, then pick "
+                     "a row to simulate.",
+        )
+    else:
+        df_mc = df_filt.copy().reset_index(drop=True)
+        # Build human-readable row labels for the selector. Use the same
+        # columns the table renders so the choice is immediately recognizable.
+        df_mc["_label"] = (
+            df_mc.apply(lambda r: (
+                f"{r.get('type', mode_r).upper()[0]}  "
+                f"${r['strike']:>7.2f}  "
+                f"exp {pd.to_datetime(r['expiration']).strftime('%b %d %y')}  "
+                f"·  mid ${r.get('mid', 0):.2f}"
+                f"  ·  IV {r.get('iv', 0) * 100:.0f}%"
+            ), axis=1)
+        )
+
+        # Side defaults from scan direction (buy=long, sell=short).
+        c_pick, c_side, c_qty, c_btn = st.columns([4, 1.2, 0.8, 1])
+        with c_pick:
+            choice_idx = st.selectbox(
+                "Candidate to analyze",
+                df_mc.index,
+                format_func=lambda i: df_mc.at[i, "_label"],
+                key="s_mc_choice",
+            )
+        with c_side:
+            side = st.radio(
+                "Side", ["long", "short"],
+                index=0 if buy_r else 1,
+                horizontal=True, key="s_mc_side",
+            )
+        with c_qty:
+            qty = st.number_input("Contracts", value=1, min_value=1,
+                                  max_value=100, step=1, key="s_mc_qty")
+        with c_btn:
+            st.write("")  # vertical-align nudge
+            run_mc = st.button("Run MC", type="primary", key="s_mc_run")
+
+        # Persist the trigger across reruns so the panel stays expanded.
+        if run_mc:
+            st.session_state["s_mc_armed"] = True
+
+        if st.session_state.get("s_mc_armed", False) and choice_idx is not None:
+            picked = df_mc.loc[choice_idx]
+            opt_type = str(picked.get("type", "call")).lower()
+            opt_type = "call" if opt_type.startswith("c") else "put"
+            try:
+                position = position_from_chain_row(
+                    underlying=ticker_r,
+                    spot=spot,
+                    row={
+                        "Strike": picked["strike"],
+                        "Expiration": picked["expiration"],
+                        "Mid": picked.get("mid", picked.get("ask", 0)),
+                        "IV%": picked.get("iv", 0) * 100,
+                    },
+                    side=side,  # type: ignore[arg-type]
+                    opt_type=opt_type,  # type: ignore[arg-type]
+                    qty=int(qty),
+                    earnings_dates=tuple(ed) if ed else (),
+                    risk_free_rate=0.045,
+                )
+            except Exception as exc:  # noqa: BLE001
+                st.error(f"Couldn't build position from this row: {exc}")
+            else:
+                render_mc_panel(
+                    position,
+                    key=f"s_mc_panel_{choice_idx}_{side}_{qty}",
+                    label=f"{ticker_r} {opt_type.upper()} ${picked['strike']:.0f} "
+                          f"exp {pd.to_datetime(picked['expiration']).strftime('%b %d %y')}",
+                )
+
     from report import render_html
     html = render_html(df_filt, ticker_r, spot, ed, mode_r, buy_r, rcc,
                        res["min_oi"], res.get("min_vol", 0))
@@ -2277,6 +2364,40 @@ def _render_spreads_view(
                 row = sub.iloc[selected_idx]
                 st.markdown("**Payoff diagram**")
                 _show_payoff_chart(row, spot)
+
+                # ── Monte Carlo for the selected multi-leg strategy ─────────
+                from spreads import build_legs_from_row
+                raw_legs = build_legs_from_row(row)
+                if raw_legs:
+                    try:
+                        exp = pd.to_datetime(row["expiration"]).date()
+                        legs_spec = [
+                            LegSpec(
+                                opt_type=lg["type"],
+                                strike=float(lg["strike"]),
+                                expiration=exp,
+                                side="long" if int(lg["qty"]) > 0 else "short",
+                                mid=float(lg.get("entry_mid", 0.0)),
+                                iv=float(lg["iv"]) if lg.get("iv") else None,
+                                qty=abs(int(lg["qty"])),
+                            )
+                            for lg in raw_legs
+                        ]
+                        spread_position = position_from_legs(
+                            underlying=ticker,
+                            spot=spot,
+                            legs_spec=legs_spec,
+                            earnings_dates=(),
+                            risk_free_rate=0.045,
+                        )
+                        st.markdown("**Monte Carlo P&L distribution**")
+                        render_mc_panel(
+                            spread_position,
+                            key=f"{key_prefix}_mc_{strategy_name.replace(' ', '_')}_{selected_idx}",
+                            label=f"{strategy_name} — {len(legs_spec)}-leg position",
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        st.caption(f"_MC unavailable for this row: {exc}_")
 
     with st.expander("Column & Greek key"):
         st.markdown("""
