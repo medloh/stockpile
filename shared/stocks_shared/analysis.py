@@ -65,7 +65,7 @@ def detect_suspicious_positions(transactions, open_positions):
         date_str, action, opt_type, _, _, _, qty, price, _, _, _ = row
         if opt_type != "Stock" or qty == "":
             continue
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", date_str)
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", date_str)
         if not m:
             continue
         q = int(qty)
@@ -84,7 +84,7 @@ def detect_suspicious_positions(transactions, open_positions):
         strike   = pos["strike"]
 
         exp_date = None
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", exp_str)
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", exp_str)
         if m:
             exp_date = date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
 
@@ -154,7 +154,7 @@ def get_last_option(transactions, option_type):
     close_action = close_rows[-1][1]  if close_rows else None
 
     def _parse(s):
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", s or "")
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", s or "")
         return date(int(m.group(3)), int(m.group(1)), int(m.group(2))) if m else None
 
     days_open = None
@@ -223,7 +223,7 @@ def compute_avg_held_anchor(transactions):
         date_str, action, opt_type, _sym, _strike, _exp, qty, _, _, _, _ = row
         if opt_type != "Stock" or qty == "":
             continue
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", date_str)
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", date_str)
         if not m:
             continue
         lot_date = date(int(m.group(3)), int(m.group(1)), int(m.group(2)))
@@ -263,7 +263,7 @@ def compute_closed_avg_days(transactions):
         date_str, action, opt_type, _sym, _strike, _exp, qty, _, _, _, _ = row
         if opt_type != "Stock" or qty == "":
             continue
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", date_str)
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", date_str)
         if not m:
             continue
         lot_date = date(int(m.group(3)), int(m.group(1)), int(m.group(2)))

@@ -7,8 +7,13 @@ TXN_ROW = 39  # default transaction data start row (used for inconsistent tabs)
 
 
 def date_to_formula(exp_str):
-    """'MM/DD/YYYY' → 'DATE(YYYY,MM,DD)'"""
-    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", exp_str or "")
+    """Convert a US-style date to a Sheets DATE() formula.
+
+    Accepts both zero-padded (`05/14/2020`) and unpadded
+    (`5/14/2020`) month/day — Robinhood CSV exports use the former
+    historically and the latter in newer rows / our merge scripts.
+    """
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", exp_str or "")
     if not m:
         return "DATE(2099,1,1)"
     return f"DATE({m.group(3)},{int(m.group(1))},{int(m.group(2))})"
@@ -22,6 +27,24 @@ def shorten_symbol(symbol):
     strike = m.group(3).rstrip("0").rstrip(".")
     typ = "C" if m.group(4) == "C" else "P"
     return f"{strike}{typ} {m.group(1)}/{m.group(2)[2:]}"
+
+
+def _short_exp(exp_str):
+    """'12/17/2027' → '12/17/27' for compact section headers."""
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", exp_str or "")
+    if not m:
+        return exp_str or ""
+    return f"{m.group(1)}/{m.group(2)}/{m.group(3)[2:]}"
+
+
+def _sort_by_expiration(positions):
+    """Sort open positions by expiration date ascending (earliest first)."""
+    def key(pos):
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", pos.get("expiration") or "")
+        if m:
+            return (int(m.group(3)), int(m.group(1)), int(m.group(2)))
+        return (9999, 99, 99)
+    return sorted(positions, key=key)
 
 
 def build_txn_only_sections(last_row):
@@ -39,10 +62,19 @@ def build_txn_only_sections(last_row):
 # Each returns a 2-D list (rows × cols) for one section of the tab.
 # Callers assemble these into the sections dict with the appropriate range key.
 
-def _offsets(show_calls, show_puts):
-    """Return (p, i, txn_row) — dynamic row starts based on sections present."""
-    p = 19 if show_calls else 10
-    i = (p + 9) if show_puts else (19 if show_calls else 10)
+def _offsets(show_calls, show_puts, n_calls=1, n_puts=1):
+    """Return (p, i, txn_row) — dynamic row starts based on sections present.
+
+    n_calls / n_puts are the count of OPEN CALL / OPEN PUT sections to
+    stack (one per unique strike/expiration). Each section is 8 rows
+    + 1 gap row = 9 rows tall. When show_calls / show_puts is True but
+    no positions exist, we still reserve 1 section's worth of space
+    (8+1 rows) for the placeholder header.
+    """
+    nc = max(n_calls, 1) if show_calls else 0
+    npts = max(n_puts, 1) if show_puts else 0
+    p = 10 + 9 * nc if show_calls else 10
+    i = p + 9 * npts if show_puts else p
     return p, i, i + 9
 
 
@@ -138,13 +170,144 @@ def _put_history_rows(T, L, p):
     ]
 
 
+# ── Per-call / per-put section helpers ───────────────────────────────────────
+#
+# Each open call (or put) — meaning a unique strike/expiration combo —
+# gets its own 8-row OPEN section pair (D:E for the position info, G:H
+# for the metrics). Sections stack vertically starting at row 10 for
+# calls, then puts. `base` is the section's first row (the header row).
+
+def _open_call_rows(call):
+    strike = call["strike"]
+    exp = call["expiration"]
+    df = date_to_formula(exp)
+    cts = -call["contracts"]
+    open_date = call.get("open_date") or ""
+    od_f = date_to_formula(open_date) if open_date else ""
+    od_cell = f"={od_f}" if od_f else ""
+    days_open = f"=TODAY()-{od_f}" if od_f else ""
+    price_at_open = call.get("price_at_open") or ""
+    header = f"OPEN CALL — ${strike} {_short_exp(exp)}"
+    return [
+        [header, ""],
+        ["Strike", strike],
+        ["Expiration", exp],
+        ["Date Opened", od_cell],
+        ["Days Open", days_open],
+        ["Stock Price at Open", price_at_open],
+        ["Days Left", f"=DAYS({df},TODAY())"],
+        ["Contracts", cts],
+    ]
+
+
+def _open_call_metrics_rows(call, base):
+    """Per-call metrics; formulas reference cells inside this section
+    (H{base+1}..H{base+7}, E{base+6}, E{base+7}) plus the global Stock
+    Price at B5. Cost to Close is the per-call market value (static
+    value populated by setup_tab) so each call's TV Ann Yield uses
+    only its own cost — not the aggregate of all open calls.
+    """
+    strike = call["strike"]
+    prem = round(call["premium"], 2)
+    mv = call.get("market_value")
+    if mv is None:
+        mv = ""
+    return [
+        ["OPEN CALL METRICS", ""],
+        ["Premium Received", prem],
+        ["Cost to Close", mv],
+        ["Unrealized P&L", f"=H{base+1}+H{base+2}"],
+        ["Status", f"=IF(B5>{strike},\"ITM\",\"OTM\")"],
+        ["Intrinsic Value", f"=MAX(0,B5-{strike})*E{base+7}*100"],
+        ["Time Value", f"=H{base+2}-H{base+5}"],
+        ["** TV Ann Yield",
+         f"=IFERROR(MAX(0,-H{base+6})/"
+         f"(-E{base+7}*100*B5+H{base+2})*(365/E{base+6}),0)"],
+    ]
+
+
+def _empty_call_rows():
+    return [["OPEN CALLS", ""]] + [["", ""]] * 7
+
+
+def _empty_call_metrics_rows():
+    return [["OPEN CALL METRICS", ""]] + [["", ""]] * 7
+
+
+def _open_put_rows(put):
+    strike = put["strike"]
+    exp = put["expiration"]
+    df = date_to_formula(exp)
+    cts = -put["contracts"]
+    open_date = put.get("open_date") or ""
+    od_f = date_to_formula(open_date) if open_date else ""
+    od_cell = f"={od_f}" if od_f else ""
+    days_open = f"=TODAY()-{od_f}" if od_f else ""
+    price_at_open = put.get("price_at_open") or ""
+    header = f"OPEN PUT — ${strike} {_short_exp(exp)}"
+    return [
+        [header, ""],
+        ["Strike", strike],
+        ["Expiration", exp],
+        ["Date Opened", od_cell],
+        ["Days Open", days_open],
+        ["Stock Price at Open", price_at_open],
+        ["Days Left", f"=DAYS({df},TODAY())"],
+        ["Contracts", cts],
+    ]
+
+
+def _open_put_metrics_rows(put, base):
+    strike = put["strike"]
+    prem = round(put["premium"], 2)
+    mv = put.get("market_value")
+    if mv is None:
+        mv = ""
+    return [
+        ["OPEN PUT METRICS", ""],
+        ["Premium Received", prem],
+        ["Cost to Close", mv],
+        ["Unrealized P&L", f"=H{base+1}+H{base+2}"],
+        ["Status", f"=IF(B5<{strike},\"ITM\",\"OTM\")"],
+        ["Intrinsic Value", f"=MAX(0,{strike}-B5)*E{base+7}*100"],
+        ["Time Value", f"=H{base+2}-H{base+5}"],
+        ["TV Ann Yield",
+         f"=IFERROR(IF(E{base+6}>0,"
+         f"MAX(0,-H{base+6})/(-E{base+7}*100*{strike})*(365/E{base+6}),0),0)"],
+    ]
+
+
+def _empty_put_rows():
+    return [["OPEN PUTS", ""]] + [["", ""]] * 7
+
+
+def _empty_put_metrics_rows():
+    return [["OPEN PUT METRICS", ""]] + [["", ""]] * 7
+
+
 # ── Public layout builders ─────────────────────────────────────────────────
 
 def build_open_sections(ticker, open_positions, last_row, avg_held_anchor=None,
                         brokerage="", show_calls=True, show_puts=True):
-    """Build position tab sections for an open (Consistent) position."""
+    """Build position tab sections for an open (Consistent) position.
+
+    Each open call (unique strike/expiration combo) gets its own
+    OPEN CALL + OPEN CALL METRICS section pair, stacked vertically
+    starting at row 10. Same for puts at row p (computed from how
+    much vertical space the call sections consume).
+    """
     L = last_row
-    p, i, txn_row = _offsets(show_calls, show_puts)
+
+    open_calls     = _sort_by_expiration(
+        [pos for pos in open_positions if pos["type"] == "Call"])
+    open_puts_list = _sort_by_expiration(
+        [pos for pos in open_positions if pos["type"] == "Put"])
+
+    n_calls = len(open_calls)
+    n_puts  = len(open_puts_list)
+
+    p, i, txn_row = _offsets(show_calls, show_puts,
+                             n_calls=n_calls, n_puts=n_puts)
     T = txn_row
 
     if avg_held_anchor:
@@ -152,51 +315,6 @@ def build_open_sections(ticker, open_positions, last_row, avg_held_anchor=None,
         avg_days_formula = f"=TODAY()-DATE({y},{mo},{d})"
     else:
         avg_days_formula = "0"
-
-    open_calls     = [pos for pos in open_positions if pos["type"] == "Call"]
-    open_puts_list = [pos for pos in open_positions if pos["type"] == "Put"]
-
-    itm = open_calls[0] if open_calls else None
-    if itm:
-        itm_strike        = itm["strike"]
-        oc_strike         = itm["strike"]
-        oc_exp            = itm["expiration"]
-        oc_cts            = -itm["contracts"]
-        oc_prem           = round(itm["premium"], 2)
-        oc_df             = date_to_formula(itm["expiration"])
-        oc_status         = f"=IF(B5>{itm_strike},\"ITM\",\"OTM\")"
-        oc_open_date      = itm.get("open_date", "") or ""
-        oc_open_date_f    = date_to_formula(oc_open_date) if oc_open_date else ""
-        oc_open_date_cell = f"={oc_open_date_f}" if oc_open_date_f else ""
-        oc_days_open      = f"=TODAY()-{oc_open_date_f}" if oc_open_date_f else ""
-        oc_price_at_open  = itm.get("price_at_open", "") or ""
-    else:
-        itm_strike        = ""
-        oc_strike         = oc_exp = oc_cts = oc_prem = ""
-        oc_df             = "DATE(2099,1,1)"
-        oc_status         = ""
-        oc_open_date      = oc_open_date_f = oc_open_date_cell = ""
-        oc_days_open      = oc_price_at_open = ""
-
-    op = open_puts_list[0] if open_puts_list else None
-    if op:
-        op_strike         = op["strike"]
-        op_exp            = op["expiration"]
-        op_cts            = -op["contracts"]
-        op_prem           = round(op["premium"], 2)
-        op_df             = date_to_formula(op["expiration"])
-        op_status         = f"=IF(B5<{op_strike},\"ITM\",\"OTM\")"
-        op_open_date      = op.get("open_date", "") or ""
-        op_open_date_f    = date_to_formula(op_open_date) if op_open_date else ""
-        op_open_date_cell = f"={op_open_date_f}" if op_open_date_f else ""
-        op_days_open      = f"=TODAY()-{op_open_date_f}" if op_open_date_f else ""
-        op_price_at_open  = op.get("price_at_open", "") or ""
-    else:
-        op_strike         = op_exp = op_cts = op_prem = ""
-        op_df             = "DATE(2099,1,1)"
-        op_status         = ""
-        op_open_date      = op_open_date_f = op_open_date_cell = ""
-        op_days_open      = op_price_at_open = ""
 
     sections = {
         "A1:C1": [[ticker, "Status", "Consistent"]],
@@ -236,59 +354,28 @@ def build_open_sections(ticker, open_positions, last_row, avg_held_anchor=None,
     }
 
     if show_calls:
-        sections.update({
-            "A10:B15": _call_history_rows(T, L),
-            "D10:E17": [
-                ["OPEN CALLS", ""],
-                ["Strike", oc_strike],
-                ["Expiration", oc_exp],
-                ["Date Opened", oc_open_date_cell],
-                ["Days Open", oc_days_open],
-                ["Stock Price at Open", oc_price_at_open],
-                ["Days Left", f"=DAYS({oc_df},TODAY())" if itm else ""],
-                ["Contracts", oc_cts],
-            ],
-            "G10:H17": [
-                ["OPEN CALL METRICS", ""],
-                ["Premium Received", oc_prem],
-                ["Cost to Close", "=B7" if itm else ""],
-                ["Unrealized P&L", "=H11+H12" if itm else ""],
-                ["Status", oc_status],
-                ["Intrinsic Value",
-                 f"=MAX(0,B5-{itm_strike})*E17*100" if itm_strike != "" else ""],
-                ["Time Value", "=H12-H15" if itm else ""],
-                ["** TV Ann Yield",
-                 "=IFERROR(MAX(0,-H16)/(-E17*100*B5+B7)*(365/E16),0)" if itm else ""],
-            ],
-        })
+        # Call history (aggregate stats) stays at A10:B15. With multiple
+        # open call sections, the A:B column area below A15 is left blank.
+        sections["A10:B15"] = _call_history_rows(T, L)
+        if open_calls:
+            for idx, call in enumerate(open_calls):
+                base = 10 + 9 * idx
+                sections[f"D{base}:E{base+7}"] = _open_call_rows(call)
+                sections[f"G{base}:H{base+7}"] = _open_call_metrics_rows(call, base)
+        else:
+            sections["D10:E17"] = _empty_call_rows()
+            sections["G10:H17"] = _empty_call_metrics_rows()
 
     if show_puts:
-        sections.update({
-            f"A{p}:B{p+5}": _put_history_rows(T, L, p),
-            f"D{p}:E{p+7}": [
-                ["OPEN PUTS", ""],
-                ["Strike", op_strike],
-                ["Expiration", op_exp],
-                ["Date Opened", op_open_date_cell],
-                ["Days Open", op_days_open],
-                ["Stock Price at Open", op_price_at_open],
-                ["Days Left", f"=DAYS({op_df},TODAY())" if op else ""],
-                ["Contracts", op_cts],
-            ],
-            f"G{p}:H{p+7}": [
-                ["OPEN PUTS METRICS", ""],
-                ["Premium Received", op_prem],
-                ["Cost to Close", "=B8" if op else ""],
-                ["Unrealized P&L", f"=H{p+1}+H{p+2}" if op else ""],
-                ["Status", op_status],
-                ["Intrinsic Value",
-                 f"=MAX(0,{op_strike}-B5)*E{p+7}*100" if op else ""],
-                ["Time Value", f"=H{p+2}-H{p+5}" if op else ""],
-                ["TV Ann Yield",
-                 f"=IFERROR(IF(E{p+6}>0,MAX(0,-H{p+6})/(-E{p+7}*100*E{p+1})*(365/E{p+6}),0),0)"
-                 if op else ""],
-            ],
-        })
+        sections[f"A{p}:B{p+5}"] = _put_history_rows(T, L, p)
+        if open_puts_list:
+            for idx, put in enumerate(open_puts_list):
+                base = p + 9 * idx
+                sections[f"D{base}:E{base+7}"] = _open_put_rows(put)
+                sections[f"G{base}:H{base+7}"] = _open_put_metrics_rows(put, base)
+        else:
+            sections[f"D{p}:E{p+7}"] = _empty_put_rows()
+            sections[f"G{p}:H{p+7}"] = _empty_put_metrics_rows()
 
     return sections
 

@@ -67,7 +67,7 @@ def fetch_option_market_value(ticker: str, opt_type: str, expiration_str: str,
                               strike, contracts: int) -> float | None:
     """Return total market value as a negative number (short position = liability)."""
     try:
-        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", expiration_str or "")
+        m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", expiration_str or "")
         if not m:
             return None
         exp_yf = f"{m.group(3)}-{m.group(1)}-{m.group(2)}"
@@ -110,7 +110,7 @@ def estimate_option_history(price_history, opt_type: str, strike, expiration_str
     import numpy as np
     import pandas as pd
 
-    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", expiration_str or "")
+    m = re.match(r"(\d{1,2})/(\d{1,2})/(\d{4})", expiration_str or "")
     if not m:
         return None
     exp_ts = pd.Timestamp(f"{m.group(3)}-{m.group(1)}-{m.group(2)}")
