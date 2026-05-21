@@ -19,96 +19,43 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
+from ui_theme import (
+    PALETTE,
+    badge,
+    disclaimer_chip,
+    empty_state,
+    footer as ui_footer,
+    inject_theme,
+    metric_card,
+    register_altair_theme,
+    section_header,
+    wordmark,
+)
+
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
-    page_title="Options Scanner",
-    page_icon=str(_FAVICON_PATH) if _FAVICON_PATH.exists() else "📈",
+    page_title="Options Scanner — Stockpile",
+    page_icon=str(_FAVICON_PATH) if _FAVICON_PATH.exists() else "•",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
 
-
-# ── Theme switcher ──────────────────────────────────────────────────────────
-# Streamlit's three-dot menu → Settings → Theme only supports ONE custom
-# theme, so we offer four "in-between" themes here via a sidebar control.
-# The sidebar is collapsed by default; click the >> arrow on the left edge
-# to open it. None of these add vertical space to the form.
-
-THEMES: dict[str, dict[str, str] | None] = {
-    "Default":         None,
-    "Sepia":           {"bg": "#f4ede0", "sec": "#ebe2d0",
-                        "text": "#3d2f1f", "muted": "#7a5d3a"},
-    "Solarized Light": {"bg": "#fdf6e3", "sec": "#eee8d5",
-                        "text": "#586e75", "muted": "#93a1a1"},
-    "Soft":            {"bg": "#f1f5f9", "sec": "#e2e8f0",
-                        "text": "#334155", "muted": "#64748b"},
-}
+# Inject the global stylesheet and Altair theme as early as possible so
+# every downstream widget renders in the redesigned visual language.
+inject_theme()
+register_altair_theme()
 
 
-def _apply_theme(theme_name: str) -> None:
-    cfg = THEMES.get(theme_name)
-    if not cfg:
-        return
-    bg, sec, text, muted = cfg["bg"], cfg["sec"], cfg["text"], cfg["muted"]
-    st.markdown(
-        f"""
-        <style>
-        [data-testid="stAppViewContainer"], .main, body {{
-            background-color: {bg};
-        }}
-        [data-testid="stHeader"] {{
-            background-color: {bg};
-        }}
-        [data-testid="stSidebar"], [data-testid="stSidebarContent"] {{
-            background-color: {sec};
-        }}
-        /* Page-level text. Scoped selectors only — using bare `span` or
-           `label` here would bleed into Streamlit's widgets and break
-           internal contrast (e.g. dark text inside a white button). */
-        .stMarkdown, .stMarkdown p, .stMarkdown span,
-        h1, h2, h3, h4, h5, h6,
-        [data-testid="stMetricValue"], [data-testid="stMetricLabel"],
-        [data-testid="stMetricDelta"],
-        [data-testid="stTabs"] button p,
-        [data-testid="stWidgetLabel"], [data-testid="stWidgetLabel"] p,
-        label[data-testid="stWidgetLabel"] {{
-            color: {text};
-        }}
-        /* Radio / checkbox option labels (the per-option text, not the
-           widget's main label). Streamlit renders these as a wrapper
-           label containing a div/p with the option text. */
-        [data-testid="stRadio"] [role="radiogroup"] label,
-        [data-testid="stRadio"] [role="radiogroup"] label p,
-        [data-testid="stRadio"] [role="radiogroup"] label div,
-        [data-testid="stCheckbox"] label,
-        [data-testid="stCheckbox"] label p {{
-            color: {text};
-        }}
-        .stCaption, [data-testid="stCaptionContainer"],
-        small, [data-testid="stCaption"] {{
-            color: {muted};
-        }}
-        /* Secondary buttons (download, etc.) — harmonize bg/text with
-           the theme. Primary buttons are styled separately (orange) in
-           the always-on layout block, so excluded here. */
-        .stButton > button:not([kind="primary"]),
-        .stDownloadButton > button,
-        button[data-testid="stBaseButton-secondary"] {{
-            background-color: {sec};
-            color: {text};
-            border: 1px solid {muted};
-        }}
-        .stDownloadButton > button p,
-        .stButton > button:not([kind="primary"]) p {{
-            color: {text};
-        }}
-        [data-testid="stDataFrame"], .stDataFrame {{
-            background-color: {sec};
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+# ── Legacy theme switcher (kept for backward-compat session_state keys) ─────
+# The new design system replaces the old four-way theme picker. We leave a
+# no-op so any existing references / saved preferences don't crash.
+
+THEMES: dict[str, None] = {"Default": None}
+
+
+def _apply_theme(theme_name: str) -> None:  # noqa: ARG001 — preserved for compat
+    """Compatibility shim: the new ui_theme.inject_theme() supersedes this."""
+    return None
 
 
 # ── Cached data fetching ─────────────────────────────────────────────────────
@@ -362,7 +309,11 @@ def _stamp_caption() -> None:
 def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
              min_oi: int = 0, min_vol: int = 0) -> None:
     if sub.empty:
-        st.info("No options match the current filters.")
+        empty_state(
+            "No matches in this chain",
+            "Try widening the delta band, lowering min OI/Volume, or "
+            "extending the DTE range.",
+        )
         return
 
     disp = pd.DataFrame({
@@ -657,7 +608,11 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
                       ) -> None:
     """All options for one expiration, sorted by strike, rows shaded by IV+pp."""
     if df_exp.empty:
-        st.info("No options for this expiration after filters.")
+        empty_state(
+            "No options for this expiration",
+            "Filters removed every contract at this date. Lower min OI "
+            "or relax the delta band to surface more rows.",
+        )
         return
 
     df_s = df_exp.sort_values(["strike", "type"]).reset_index(drop=True)
@@ -993,10 +948,12 @@ def _tab_single() -> None:
             )
         with n5:
             st.markdown(
-                "<p style='text-align:left; color:#f97316; font-size:1.1rem;"
-                " font-weight:600; margin:0; padding:0 0 1rem 20px;'>"
-                "⚠ Best used during market hours —<br>"
-                "pre/post-market data may be stale or missing.</p>",
+                "<div style='padding:0 0 0.4rem 1rem;'>"
+                + badge("MARKET HOURS RECOMMENDED", "warn")
+                + "<p style='color:#475569; font-size:0.78rem; "
+                "margin:0.45rem 0 0 0; line-height:1.4;'>"
+                "Pre/post-market quotes may be stale or missing — IV+pp "
+                "rankings depend on fresh data.</p></div>",
                 unsafe_allow_html=True,
             )
 
@@ -1141,18 +1098,43 @@ def _tab_single() -> None:
                     res["delta_min"], res["delta_max"])].copy()
     spot      = float(df_r["spot"].iloc[0])
 
-    st.divider()
-    m1, m2, m3 = st.columns(3)
-    m1.metric("Spot", f"${spot:.2f}")
-    m2.metric("Expirations", df_r["expiration"].nunique())
+    st.markdown(
+        "<div style='margin-top:0.4rem;'></div>", unsafe_allow_html=True,
+    )
+    section_header(
+        title=f"{ticker_r} — scan results",
+        subtitle="Spot, available expirations, and the next earnings event.",
+        eyebrow="SUMMARY",
+    )
+    m1, m2, m3, m4 = st.columns(4)
     ed = res["earnings_dates"]
     if ed:
         earn_days = (ed[0] - date.today()).days
-        earn_label = f"{ed[0].strftime('%b %d')} ({earn_days}d)"
+        earn_label = f"{ed[0].strftime('%b %d')}"
+        earn_sub   = f"in {earn_days}d"
     else:
-        earn_label = "unknown"
-    m3.metric("Next Earnings", earn_label)
-    st.divider()
+        earn_label = "—"
+        earn_sub   = "no upcoming events"
+    n_contracts = int(len(df_filt))
+    action_lbl = "Find new" if not res["roll_close_cost"] else "Roll"
+    direction_lbl = "BUY" if buy_r else "SELL"
+    with m1:
+        metric_card("SPOT PRICE", f"${spot:,.2f}",
+                    help_text="Last trade — Yahoo or Schwab depending on source.")
+    with m2:
+        metric_card("EXPIRATIONS", f"{df_r['expiration'].nunique()}",
+                    help_text=f"{n_contracts} contracts after filters")
+    with m3:
+        metric_card("NEXT EARNINGS", earn_label,
+                    delta=earn_sub, delta_sign="neutral")
+    with m4:
+        metric_card("ACTION", f"{action_lbl}",
+                    delta=f"{direction_lbl} · {mode_r.upper()}",
+                    delta_sign="neutral")
+    st.markdown(
+        "<div style='margin:0.85rem 0 0.35rem 0;'></div>",
+        unsafe_allow_html=True,
+    )
 
     if rcc is not None:
         st.info(f"Rolling {res['roll_type']} ${res['roll_strike']:.0f} "
@@ -1260,9 +1242,20 @@ def _tab_single() -> None:
 # ── Tab: Portfolio ───────────────────────────────────────────────────────────
 
 def _tab_portfolio() -> None:
+    section_header(
+        title="Portfolio scan",
+        subtitle=(
+            "Upload a brokerage CSV — we'll surface roll candidates and rich "
+            "options ticker-by-ticker, with covered-call positions accounted for."
+        ),
+        eyebrow="STEP 01 · UPLOAD",
+    )
     uploaded = st.file_uploader("Brokerage CSV export", type=["csv"])
     st.markdown(
-        "**:red[🔒 Your file is processed locally and never leaves your machine.]**"
+        "<div style='margin: 0.4rem 0 0.7rem 0;'>"
+        + badge("PROCESSED LOCALLY · NEVER UPLOADED", "positive")
+        + "</div>",
+        unsafe_allow_html=True,
     )
 
     pc1, pc2, pc3, pc4, pc5 = st.columns(5)
@@ -1437,15 +1430,24 @@ def _tab_portfolio() -> None:
                            "throttling. Try again in a moment.")
                 continue
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Spot", f"${spot:.2f}")
-            m2.metric("Expirations", df["expiration"].nunique())
+            m1, m2, m3, m4 = st.columns(4)
             if earnings_dates:
                 earn_days = (earnings_dates[0] - date.today()).days
-                earn_label = f"{earnings_dates[0].strftime('%b %d')} ({earn_days}d)"
+                earn_label = f"{earnings_dates[0].strftime('%b %d')}"
+                earn_sub   = f"in {earn_days}d"
             else:
-                earn_label = "unknown"
-            m3.metric("Next Earnings", earn_label)
+                earn_label = "—"
+                earn_sub   = "no upcoming events"
+            with m1:
+                metric_card("SPOT", f"${spot:,.2f}")
+            with m2:
+                metric_card("SHARES", f"{pos['shares']:,}",
+                            help_text="Covered" if covered else "Uncovered")
+            with m3:
+                metric_card("EXPIRATIONS", f"{df['expiration'].nunique()}")
+            with m4:
+                metric_card("NEXT EARNINGS", earn_label,
+                            delta=earn_sub, delta_sign="neutral")
 
             for opt in pos["open_calls"]:
                 close = res["roll_close_costs"].get(opt["symbol"])
@@ -1884,18 +1886,32 @@ def _render_spreads_view(
             st.session_state[rescan_flag] = True
             st.rerun()
 
-    st.divider()
+    section_header(
+        title=f"{ticker_r} — spread candidates",
+        subtitle="Ranked by your chosen criterion, filtered by POP and width.",
+        eyebrow="RESULTS",
+    )
     m1, m2, m3 = st.columns(3)
-    m1.metric("Spot", f"${spot:.2f}")
-    m2.metric("Spreads found", len(df_r))
     ed = res["earnings_dates"]
     if ed:
         earn_days = (ed[0] - date.today()).days
-        earn_label = f"{ed[0].strftime('%b %d')} ({earn_days}d)"
+        earn_label = f"{ed[0].strftime('%b %d')}"
+        earn_sub   = f"in {earn_days}d"
     else:
-        earn_label = "unknown"
-    m3.metric("Next Earnings", earn_label)
-    st.divider()
+        earn_label = "—"
+        earn_sub   = "no upcoming events"
+    with m1:
+        metric_card("SPOT PRICE", f"${spot:,.2f}")
+    with m2:
+        metric_card("SPREADS FOUND", f"{len(df_r):,}",
+                    help_text="After all filters & sorting")
+    with m3:
+        metric_card("NEXT EARNINGS", earn_label,
+                    delta=earn_sub, delta_sign="neutral")
+    st.markdown(
+        "<div style='margin:0.85rem 0 0.35rem 0;'></div>",
+        unsafe_allow_html=True,
+    )
 
     if df_r.empty:
         delta_hint = (f", |Δ| ≤ {res['max_abs_delta']:.2f}"
@@ -2012,156 +2028,79 @@ def _tab_neutral() -> None:
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-# Layout tweaks: tighten the header→tabs gap; keep the collapsed-sidebar
-# toggle visible (soft pill background + forced color so it shows on any
-# theme, including Dim/Sepia).
+# Layout-specific overrides that build on top of the design system in
+# ui_theme.py. These cover Streamlit-version-specific behaviors (rescan
+# pill, data-source pill positioning, number-input width caps) that
+# don't belong in the shared theme module.
 st.markdown(
     """
     <style>
-    .block-container {
-        padding-top: 1rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
-    }
-
     [data-testid="stDivider"] {
         margin-top: 0 !important;
         margin-bottom: 0 !important;
-        padding-top: 0 !important;
-        padding-bottom: 0 !important;
     }
     [data-testid="stDivider"] hr {
         margin-top: 0.15rem !important;
         margin-bottom: 0.15rem !important;
     }
 
-    /* Compact metric cards — Streamlit's default value font is ~2rem, way
-       too big for our header row. */
-    [data-testid="stMetricValue"] {
-        font-size: 1.25rem !important;
-    }
-    [data-testid="stMetricLabel"] {
-        font-size: 0.85rem !important;
-    }
-
-    /* Cap number-input widths so the form doesn't look like an enterprise
-       intake form. The number itself rarely needs more than 7rem; the
-       column still controls horizontal position, the input just doesn't
-       fill it. */
+    /* Cap number-input widths so the filter row doesn't look like an
+       enterprise intake form. */
     [data-testid="stNumberInput"] {
         max-width: 7rem;
     }
-
-    /* Nudge the Top N input right so it lines up vertically with Min OI
-       in the row above. Both rows now have 5 columns / 4 gaps (filter:
-       Min DTE / Max DTE / Min OI / Min Vol / warning; scan: Delta /
-       Top N / spacer / Scan / spacer), so the offset between Top N and
-       Min OI is exactly one column-gap (~1rem). */
     [class*="st-key-top_n_align"] {
         padding-left: 1rem;
     }
-
-    /* Lift the Scan button a few pixels above the row's bottom baseline
-       so it sits even with the visual middle of the Top N input rather
-       than flush with the input's bottom edge. The left padding nudges
-       the button ~10px right of its column's left edge so it lines up
-       under the orange warning text rather than flush-left in the column. */
     [class*="st-key-scan_btn_lift"] {
-        margin-bottom: 4px;
+        margin-bottom: 0;
         padding-left: 10px;
     }
 
-    /* Primary (Scan) button — orange fallback so it stands out on every
-       theme even before the data-source-aware override (green = Yahoo,
-       blue = Schwab) is injected below. White text always, since the
-       overriding background color is dark on every variant. */
-    .stButton > button[kind="primary"],
-    button[data-testid="stBaseButton-primary"] {
-        background-color: #f97316 !important;
-        color: #ffffff !important;
-        border-color: #f97316 !important;
-    }
-    .stButton > button[kind="primary"] p,
-    button[data-testid="stBaseButton-primary"] p {
-        color: #ffffff !important;
-    }
-    .stButton > button[kind="primary"]:hover,
-    button[data-testid="stBaseButton-primary"]:hover {
-        background-color: #ea580c !important;
-        border-color: #ea580c !important;
-        color: #ffffff !important;
-    }
-
-    /* Sidebar toggle, both states. In Streamlit 1.57:
-         close button (<<) — wrapped in [data-testid="stSidebarCollapseButton"]
-         open  button (>>) — the button itself is [data-testid="stExpandSidebarButton"]
-       The icon is a Material Icons font glyph, so it inherits `color`
-       from the parent (no SVG fill needed). */
-    [data-testid="stSidebarCollapseButton"] button,
-    button[data-testid="stExpandSidebarButton"] {
-        background: #ffffff !important;
-        border: 2px solid #1e293b !important;
-        border-radius: 0.5rem !important;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35) !important;
-        z-index: 999992 !important;
-        opacity: 1 !important;
-        padding: 0.25rem !important;
-    }
-    [data-testid="stSidebarCollapseButton"] *,
-    button[data-testid="stExpandSidebarButton"] * {
-        color: #1e293b !important;
-    }
-
     /* Floating rescan button — pinned to the top header bar just right
-       of the logo (logo is ~12rem wide starting at 5rem, so it spans
-       5rem–17rem when the sidebar is collapsed). Tracks the favicon's
-       sidebar-shift via the same data-sidebar-open observer.
-       Streamlit 1.57 adds `st-key-<key>` to a container's wrapping div;
-       we use a substring match so the same rule covers every tab's pill
-       (rescan_pill_single, rescan_pill_sp, rescan_pill_dir,
-       rescan_pill_nu). Only one is visible at a time because Streamlit
-       hides inactive tab panels via display:none. */
+       of the wordmark. Tracks the sidebar shift via the data-sidebar-open
+       observer further down. */
     [class*="st-key-rescan_pill"] {
         position: fixed;
         top: 13px;
-        left: 18rem;
+        left: 21rem;
         transform: none;
         z-index: 999990;
         width: auto !important;
     }
     body[data-sidebar-open="true"] [class*="st-key-rescan_pill"] {
-        left: 33rem;
+        left: 36rem;
     }
     [class*="st-key-rescan_pill"] .stButton > button {
-        padding: 0.3rem 0.85rem !important;
+        padding: 0.35rem 0.95rem !important;
         min-height: 2.5rem;
-        border-radius: 0.5rem !important;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        border-radius: 8px !important;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.12);
         font-weight: 600;
     }
 
-    /* Data source segmented control — pinned just right of the rescan
-       pill, with the rescan slot reserved (~12rem) even when no scan
-       has been run so the toggle doesn't shift around when results
-       appear. Tracks the favicon's sidebar shift via data-sidebar-open. */
+    /* Data-source segmented control — sits to the right of the rescan
+       pill. The pill keeps its slot even before a scan so the toggle
+       doesn't reflow when results appear. */
     [class*="st-key-data_source_pill"] {
         position: fixed;
         top: 13px;
-        left: 30rem;
+        left: 33rem;
         transform: none;
         z-index: 999990;
         width: auto !important;
     }
     body[data-sidebar-open="true"] [class*="st-key-data_source_pill"] {
-        left: 45rem;
+        left: 48rem;
     }
     [class*="st-key-data_source_pill"] [data-testid="stSegmentedControl"] {
-        background: rgba(255, 255, 255, 0.85);
-        border-radius: 0.5rem;
-        box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+        background: rgba(255, 255, 255, 0.92);
+        border-radius: 8px;
+        box-shadow: 0 1px 3px rgba(15,23,42,0.10);
+        border: 1px solid #DBEAFE;
     }
     [class*="st-key-data_source_pill"] button {
-        padding: 0.25rem 0.75rem !important;
+        padding: 0.3rem 0.85rem !important;
         min-height: 2.5rem;
         font-weight: 500;
     }
@@ -2171,10 +2110,7 @@ st.markdown(
 )
 
 # Load config and seed data_source_choice into session_state BEFORE the
-# dynamic CSS block below reads it. Without this seed, the very first
-# render reads session_state before the segmented_control has had a
-# chance to populate it, so a Schwab-configured config.toml briefly
-# paints yahoo-green until the user interacts and triggers a rerun.
+# dynamic CSS block below reads it.
 from config import load_config, get_provider, get_schwab_config as _get_schwab_cfg
 _app_cfg = load_config()
 _cfg_provider = get_provider(_app_cfg)
@@ -2190,141 +2126,116 @@ if "data_source_choice" not in st.session_state:
         "schwab" if (_cfg_provider == "schwab" and _schwab_configured) else "yahoo"
     )
 
-# Primary (Scan) button color tracks the data-source dropdown live: green
-# for Yahoo Finance, blue for Schwab. Reads the widget key
-# (`data_source_choice`) — NOT the effective `data_source` — for two
-# reasons: (1) Streamlit populates widget-key session state BEFORE the
-# rerun begins, so the CSS at script-top sees the new value on the same
-# rerun the user changed the dropdown; (2) clicking the Scan button doesn't
-# change the dropdown, so the button color stays put across scans.
-_BTN_COLORS = {
-    "yahoo":  ("#16a34a", "#15803d"),   # normal, hover
-    "schwab": ("#2563eb", "#1d4ed8"),
-}
-_btn_bg, _btn_hover = _BTN_COLORS.get(
-    st.session_state.get("data_source_choice", "yahoo"),
-    _BTN_COLORS["yahoo"],
-)
+# Active state for the data-source pill picks up the primary blue — the
+# whole product follows one accent now, so we no longer recolor the
+# scan button per-source. The user can still tell which source is active
+# from the segmented-control selection state.
+_PRIMARY = PALETTE["primary"]
 st.markdown(
     f"""
     <style>
-    .stButton > button[kind="primary"],
-    button[data-testid="stBaseButton-primary"] {{
-        background-color: {_btn_bg} !important;
-        border-color: {_btn_bg} !important;
-    }}
-    .stButton > button[kind="primary"]:hover,
-    button[data-testid="stBaseButton-primary"]:hover {{
-        background-color: {_btn_hover} !important;
-        border-color: {_btn_hover} !important;
-    }}
-    /* Active button in the data-source pill picks up the same green
-       (yahoo) / blue (schwab) accent — outline + text, neutral
-       background. Streamlit marks the active button differently
-       across versions; selectors cover aria-pressed, aria-selected,
-       and any data-testid suffix containing "Active". */
     [class*="st-key-data_source_pill"] button[aria-pressed="true"],
     [class*="st-key-data_source_pill"] button[aria-selected="true"],
     [class*="st-key-data_source_pill"] button[data-testid*="Active"] {{
-        color: {_btn_bg} !important;
-        border-color: {_btn_bg} !important;
-        box-shadow: inset 0 0 0 1px {_btn_bg} !important;
+        color: {_PRIMARY} !important;
+        border-color: {_PRIMARY} !important;
+        box-shadow: inset 0 0 0 1px {_PRIMARY} !important;
     }}
     [class*="st-key-data_source_pill"] button[aria-pressed="true"] p,
     [class*="st-key-data_source_pill"] button[aria-selected="true"] p,
     [class*="st-key-data_source_pill"] button[data-testid*="Active"] p {{
-        color: {_btn_bg} !important;
+        color: {_PRIMARY} !important;
     }}
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# App logo overlaid on Streamlit's top header bar. Sits to the right of the
-# sidebar toggle, aligned with the left edge of the form content (matches
-# .block-container's left padding in `layout=wide`). The image is read once
-# at startup and embedded as a base64 data URI so we don't depend on
-# Streamlit's static-file serving and the page works regardless of cwd.
-import base64
-_LOGO_PATH = Path(__file__).parent / "assets" / "smallLogo1.png"
-try:
-    _LOGO_B64 = base64.b64encode(_LOGO_PATH.read_bytes()).decode("ascii")
-    _LOGO_DATA_URI = f"data:image/png;base64,{_LOGO_B64}"
-except OSError:
-    _LOGO_DATA_URI = ""
-if _LOGO_DATA_URI:
-    st.markdown(
-        f"""
-        <style>
-        /* Default position: sidebar collapsed, logo sits just to the right
-           of the >> expand button. */
-        .app-logo-overlay {{
-            position: fixed;
-            top: 9px;
-            left: 5rem;
-            height: 2.875rem;
-            display: flex;
-            align-items: center;
-            z-index: 999991;
-            pointer-events: none;
-            transition: left 0.2s ease;
-        }}
-        /* When the JS observer below detects the sidebar is open (width
-           above the collapsed threshold), it sets data-sidebar-open="true"
-           on body and this rule fires. CSS-only selectors against
-           Streamlit's DOM proved unreliable — multiple stSidebarCollapseButton
-           elements coexist in different states. Width is the only signal
-           that tracks the actual visible sidebar. */
-        body[data-sidebar-open="true"] .app-logo-overlay {{
-            left: 20rem;
-        }}
-        </style>
-        <div class='app-logo-overlay'>
-          <img src='{_LOGO_DATA_URI}' alt='Stockpile Option Scanner'
-               style='height:2.5rem; width:auto;' />
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+# Brand wordmark pinned to the top header bar. Replaces the legacy
+# raster-logo overlay with a typographic mark — sharper, scales cleanly,
+# and matches the rest of the design system.
+st.markdown(
+    """
+    <style>
+    .osc-wordmark-overlay {
+        position: fixed;
+        top: 14px;
+        left: 5rem;
+        height: 2.5rem;
+        display: flex;
+        align-items: center;
+        z-index: 999991;
+        pointer-events: none;
+        gap: 0.55rem;
+        font-family: 'Inter', system-ui, sans-serif;
+    }
+    @media (prefers-reduced-motion: no-preference) {
+        .osc-wordmark-overlay { transition: left 0.2s ease; }
+    }
+    body[data-sidebar-open="true"] .osc-wordmark-overlay {
+        left: 20rem;
+    }
+    .osc-wordmark-overlay .osc-wm-dot {
+        width: 8px; height: 8px; border-radius: 50%;
+        background: #1E40AF;
+        display: inline-block;
+    }
+    .osc-wordmark-overlay .osc-wm-brand {
+        font-weight: 700;
+        font-size: 0.95rem;
+        letter-spacing: -0.01em;
+        color: #0F172A;
+    }
+    .osc-wordmark-overlay .osc-wm-suffix {
+        font-size: 0.66rem;
+        font-weight: 500;
+        letter-spacing: 0.18em;
+        text-transform: uppercase;
+        color: #64748B;
+    }
+    </style>
+    <div class='osc-wordmark-overlay' aria-hidden='true'>
+      <span class='osc-wm-dot'></span>
+      <span class='osc-wm-brand'>STOCKPILE</span>
+      <span class='osc-wm-suffix'>· OPTIONS SCANNER</span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # Sidebar-state observer: watches the actual sidebar element's rendered
-    # width and writes data-sidebar-open onto body so the CSS above can
-    # respond. Lives in a 0×0 components.v1.html iframe (which can access
-    # the parent document because it's served from the same origin as
-    # the Streamlit app). Reaching window.parent.document is the standard
-    # pattern for Streamlit DOM hooks.
-    import streamlit.components.v1 as _components
-    _components.html(
-        """
-        <script>
-        (function() {
-            const doc = window.parent.document;
-            const sync = () => {
-                const sb = doc.querySelector('[data-testid="stSidebar"]');
-                if (!sb) return;
-                const w = sb.getBoundingClientRect().width;
-                doc.body.dataset.sidebarOpen = w > 60 ? 'true' : 'false';
-            };
-            sync();
-            const obs = new MutationObserver(sync);
-            obs.observe(doc.body, {
-                childList: true, subtree: true,
-                attributes: true,
-                attributeFilter: ['style', 'class', 'aria-expanded'],
-            });
-            // Also resync on viewport resize, since the sidebar's width
-            // tracks viewport size when open.
-            window.addEventListener('resize', sync);
-        })();
-        </script>
-        """,
-        height=0, width=0,
-    )
+# Sidebar-state observer: watches the actual sidebar element's rendered
+# width and writes data-sidebar-open onto body so the header-bar CSS
+# above can respond. Identical to the previous implementation — Streamlit
+# offers no native hook for this.
+import streamlit.components.v1 as _components
+_components.html(
+    """
+    <script>
+    (function() {
+        const doc = window.parent.document;
+        const sync = () => {
+            const sb = doc.querySelector('[data-testid="stSidebar"]');
+            if (!sb) return;
+            const w = sb.getBoundingClientRect().width;
+            doc.body.dataset.sidebarOpen = w > 60 ? 'true' : 'false';
+        };
+        sync();
+        const obs = new MutationObserver(sync);
+        obs.observe(doc.body, {
+            childList: true, subtree: true,
+            attributes: true,
+            attributeFilter: ['style', 'class', 'aria-expanded'],
+        });
+        window.addEventListener('resize', sync);
+    })();
+    </script>
+    """,
+    height=0, width=0,
+)
 
-# Title-bar data source switch — pinned via CSS to the right of the
+
+# Title-bar data-source switch — pinned via CSS to the right of the
 # rescan pill so it's always visible without opening the sidebar.
-# Config loading + initial session_state seeding happened above (so the
-# dynamic button-color CSS picks up the right value on first render).
 def _source_label(s: str) -> str:
     if s == "yahoo":
         return "Yahoo Finance"
@@ -2341,7 +2252,6 @@ with st.container(key="data_source_pill"):
 if _source_raw is None:
     _source_raw = "yahoo"
 
-# Effective provider — fall back to yahoo if schwab isn't ready
 if _source_raw == "schwab" and _schwab_configured:
     data_source = "schwab"
 else:
@@ -2349,22 +2259,80 @@ else:
 st.session_state["data_source"] = data_source
 st.session_state["schwab_config"] = _cfg_schwab if data_source == "schwab" else None
 
-# Sidebar: theme only for now. Reserved for future settings.
+
+# ── Page header ──────────────────────────────────────────────────────────
+# Sits inside the main canvas (not the fixed top bar) — gives the page a
+# proper title, subtitle, and the disclaimer chip.
+_header_left, _header_right = st.columns([3, 2], vertical_alignment="center")
+with _header_left:
+    section_header(
+        title="Options scanner",
+        subtitle=(
+            "Surface contracts whose implied volatility sits above (or below) "
+            "the fitted surface. Filter by DTE, delta, liquidity; export a "
+            "shareable HTML report."
+        ),
+        eyebrow="OPTION CHAIN · IV SURFACE · SPREADS",
+    )
+with _header_right:
+    st.markdown(
+        "<div style='display:flex; justify-content:flex-end; "
+        "align-items:center; gap:0.5rem;'>"
+        + disclaimer_chip("Research tool · Not investment advice")
+        + badge(
+            f"Source: {_PROVIDER_LABELS.get(data_source, data_source).upper()}",
+            "info",
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+# Sidebar: an "About" panel — the legacy theme picker is gone (we now ship
+# one canonical design system). Add helpful links and a status indicator.
 with st.sidebar:
-    st.markdown("**Theme**")
-    theme_choice = st.radio(
-        "Theme",
-        list(THEMES.keys()),
-        index=list(THEMES.keys()).index("Sepia"),
-        key="theme_choice",
-        label_visibility="collapsed",
+    st.markdown(
+        "<div style='padding: 0.5rem 0 0.75rem 0;'>"
+        + badge("WORKSPACE", "neutral")
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    section_header(
+        title="Stockpile",
+        subtitle="Options analytics for the patient seller.",
+    )
+    st.markdown("---")
+    section_header("Data source", eyebrow="ACTIVE PROVIDER")
+    _src_label = _source_label(data_source)
+    st.markdown(
+        f"<div style='font-size:0.86rem; color:#1E3A8A; margin-bottom:0.4rem;'>"
+        f"{badge(_src_label, 'info' if data_source == 'yahoo' else 'accent')}"
+        f"</div>",
+        unsafe_allow_html=True,
     )
     st.caption(
-        "Custom themes here override Streamlit's built-in Light/Dark "
-        "via injected CSS. Pick *Default* to fall back to Streamlit's "
-        "own theme (also configurable in the three-dot menu → Settings)."
+        "Switch between Yahoo Finance (free, 15-min delay) and Schwab "
+        "(authenticated, live). Use the toggle in the top bar."
     )
-_apply_theme(theme_choice)
+    st.markdown("---")
+    section_header("About", eyebrow="HOW THIS WORKS")
+    st.caption(
+        "For every option in the chain, we fit a smooth volatility "
+        "surface across strike and DTE, then rank contracts by how much "
+        "their IV exceeds the fit (IV+pp). 3pp ≈ noise; 5+pp is signal."
+    )
+    st.markdown("---")
+    section_header("Documentation", eyebrow="REFERENCE")
+    st.markdown(
+        "- [README](https://github.com/) — overview & install\n"
+        "- [Interpreting IV](https://github.com/) — what IV+pp means\n"
+        "- [Spreads](https://github.com/) — strategy glossary",
+        unsafe_allow_html=False,
+    )
+
+# Compatibility shim — keep `_apply_theme(theme_choice)` working in case
+# any deferred code path references it. With the new design system in
+# place this is a no-op.
+_apply_theme("Default")
 
 tab_single, tab_portfolio, tab_spreads, tab_directional, tab_neutral = st.tabs(
     ["Single Ticker", "Portfolio", "Spreads", "Directional", "Neutral"]
@@ -2384,3 +2352,6 @@ with tab_directional:
 
 with tab_neutral:
     _tab_neutral()
+
+# ── Footer ───────────────────────────────────────────────────────────────
+ui_footer()
