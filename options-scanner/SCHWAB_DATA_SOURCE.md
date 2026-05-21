@@ -66,7 +66,7 @@ callback_url = "https://127.0.0.1:8182/"
 token_file   = "~/.config/schwab-token.json"
 ```
 
-### 3. Authenticate (first run only)
+### 3. Authenticate (initial setup, then re-run every 7 days)
 
 ```bash
 uv run options-scanner/schwab_auth.py
@@ -75,11 +75,27 @@ uv run options-scanner/schwab_auth.py
 - You may get key and secret before app is ready to be used.
 
 This opens a browser, logs you in to Schwab, and saves an OAuth token.
-Subsequent runs refresh the token silently.
 - this will ask you to login
 - it wants you to login to your schwab account, not the new developer acct.
 - You will get an SSL warning since you're using a self-signed cert locally.
 - You'll have to press the advanced button to continue
+
+**You must re-run this command every 7 days.** Schwab issues two
+tokens during OAuth: a short-lived **access token** (30 minutes) and
+a longer-lived **refresh token** (7 days). The scanner refreshes the
+access token automatically on every request, but the refresh token
+itself has a **fixed 7-day TTL from the initial OAuth login** —
+using it does *not* extend it. Once the 7 days are up, the next
+scan fails silently and surfaces as:
+
+```
+Could not fetch live price for AAPL from Schwab
+```
+
+The fix is just to re-run `schwab_auth.py` (which wipes the old
+token file and walks you through the browser login again). Restart
+any running Streamlit server afterward so the cached Schwab client
+picks up the new token.
 
 ## Usage
 

@@ -36,7 +36,10 @@ def get_client(app_key: str, app_secret: str, callback_url: str,
     """Return authenticated schwab-py client; cached per (app_key, token_file).
 
     First run (no token file): opens browser for OAuth login.
-    Subsequent runs: silently refreshes from the stored token.
+    Subsequent runs: silently refresh the access token via the stored
+    refresh token. The refresh token itself has a fixed 7-day TTL from
+    the initial OAuth — once expired, every quote/chain call returns
+    None and the user must re-run schwab_auth.py.
     Raises ValueError with a user-friendly message on auth failure.
     """
     import schwab

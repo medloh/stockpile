@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-"""First-run Schwab OAuth helper.
+"""Schwab OAuth helper — run on initial setup and every 7 days after.
 
-Opens a browser, logs in to Schwab, and saves the token to disk.
-Run this once before using --data-source schwab or selecting Schwab
-in the web UI.
+Opens a browser, logs in to Schwab, and saves the token to disk. Run
+this before using --data-source schwab or selecting Schwab in the web
+UI, and re-run it whenever the refresh token expires.
+
+Schwab issues a 7-day refresh token at OAuth time. Refreshing the
+access token does NOT extend the refresh token, so its lifetime is
+capped at 7 days from this script's last successful run. After that
+the next quote/chain call fails and the scanner surfaces a generic
+"Could not fetch live price" error — re-running this script fixes it.
 
 Usage:
     uv run options-scanner/schwab_auth.py
