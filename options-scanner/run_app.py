@@ -904,6 +904,119 @@ def _show_scan_results(df: pd.DataFrame, mode: str, buy: bool,
 
 # ── Tab: Single Ticker ───────────────────────────────────────────────────────
 
+_OUTLOOK_TABLE: dict[tuple[bool, str], dict[str, str]] = {
+    # (buy?, opt_type) -> {stance, tone, summary, examples}
+    # 'tone' picks the accent color: pos = green, neg = red, neutral = amber, vol = purple
+    (False, "Calls"): {
+        "stance": "Bearish / neutral-down",
+        "tone": "neg",
+        "summary": "Collect premium on calls you expect to expire worthless. "
+                   "Profits if the underlying stays below the strike — the "
+                   "classic 'covered call' or 'short call' setup. IV-rich "
+                   "premium boosts the credit you receive.",
+        "examples": "Covered call · Short call · Credit call spread",
+    },
+    (False, "Puts"): {
+        "stance": "Bullish / neutral-up",
+        "tone": "pos",
+        "summary": "Collect premium on puts you expect to expire worthless. "
+                   "Profits if the underlying stays above the strike. The "
+                   "'cash-secured put' is the bullish income trade — you're "
+                   "paid to wait for a price you'd be happy to buy at.",
+        "examples": "Cash-secured put · Short put · Credit put spread",
+    },
+    (False, "Both"): {
+        "stance": "Range-bound (short volatility)",
+        "tone": "neutral",
+        "summary": "Sell premium on both sides because you expect the "
+                   "underlying to stay inside a range. Profits if IV "
+                   "contracts AND the move is small. Beware of binary "
+                   "events (earnings, FDA) that can crush range-bound bets.",
+        "examples": "Iron condor · Short strangle · Short straddle",
+    },
+    (True, "Calls"): {
+        "stance": "Bullish",
+        "tone": "pos",
+        "summary": "Pay premium for upside leverage. Profits if the "
+                   "underlying rises enough to cover the debit. IV-cheap "
+                   "candidates give you a better entry point because you "
+                   "buy when volatility is under-priced.",
+        "examples": "Long call · Debit call spread · Diagonal / PMCC",
+    },
+    (True, "Puts"): {
+        "stance": "Bearish",
+        "tone": "neg",
+        "summary": "Pay premium for downside exposure. Profits if the "
+                   "underlying falls enough to cover the debit. IV-cheap "
+                   "candidates make the directional bet more efficient "
+                   "because vol isn't already priced in.",
+        "examples": "Long put · Debit put spread · Protective put",
+    },
+    (True, "Both"): {
+        "stance": "Volatility expansion (long vol)",
+        "tone": "vol",
+        "summary": "Pay premium for a big move in either direction. "
+                   "Profits if realized vol exceeds implied vol OR if IV "
+                   "expands. Best entered when IV is low AND a catalyst "
+                   "is approaching (earnings, FDA). Beware vol crush.",
+        "examples": "Long straddle · Long strangle · Calendar spread",
+    },
+}
+
+
+_OUTLOOK_TONE_HEX = {
+    "pos":     "#059669",   # green — success
+    "neg":     "#DC2626",   # red — destructive
+    "neutral": "#D97706",   # amber — accent
+    "vol":     "#8B5CF6",   # purple — vol expansion
+}
+
+
+def _render_outlook_card(buy: bool, opt_type: str) -> None:
+    """Render the directional-outlook callout for the Single Ticker tab.
+
+    Maps the user's (Direction × Option Type) selection to a structured
+    market-view summary so users know what the scan is actually screening
+    for. Renders as a small card in the third column of Group 2.
+    """
+    cfg = _OUTLOOK_TABLE.get((buy, opt_type))
+    if not cfg:
+        return
+    accent = _OUTLOOK_TONE_HEX[cfg["tone"]]
+    st.html(
+        f"""
+        <div style="
+            border-left: 3px solid {accent};
+            background: rgba(255,255,255,0.6);
+            border-radius: 6px;
+            padding: 0.5rem 0.7rem;
+            font-family: var(--osc-font), -apple-system, sans-serif;
+            line-height: 1.45;
+            color: var(--osc-ink-1);
+            height: 100%;
+        ">
+            <div style="font-size: 0.65rem; font-weight: 700;
+                        text-transform: uppercase; letter-spacing: 0.08em;
+                        color: var(--osc-ink-4); margin-bottom: 2px;">
+                Market view
+            </div>
+            <div style="font-size: 0.92rem; font-weight: 600;
+                        color: {accent}; margin-bottom: 4px;">
+                {cfg['stance']}
+            </div>
+            <div style="font-size: 0.78rem; color: var(--osc-ink-2);
+                        margin-bottom: 4px;">
+                {cfg['summary']}
+            </div>
+            <div style="font-size: 0.7rem; font-weight: 500;
+                        color: var(--osc-ink-3); font-style: italic;">
+                e.g. {cfg['examples']}
+            </div>
+        </div>
+        """
+    )
+
+
 def _tab_single() -> None:
     # ── Group 1: Ticker + flow ────────────────────────────────────────────────
     with st.container(border=True):
@@ -940,7 +1053,7 @@ def _tab_single() -> None:
             with rc3:
                 roll_exp = st.date_input("Current expiration", key="s_roll_exp")
         else:
-            a1, a2, _ = st.columns([2.2, 1.8, 2])
+            a1, a2, a3 = st.columns([2.2, 1.8, 3.0])
             with a1:
                 action = st.radio(
                     "Direction",
@@ -953,6 +1066,8 @@ def _tab_single() -> None:
                 option_type = st.radio("Option Type",
                                        ["Calls", "Puts", "Both"],
                                        horizontal=True, key="s_opt_type")
+            with a3:
+                _render_outlook_card(buy, option_type)
 
     # ── Group 3: Filters ──────────────────────────────────────────────────────
     with st.container(border=True):
@@ -1233,9 +1348,21 @@ def _tab_single() -> None:
                      "a row to simulate.",
         )
     else:
-        df_mc = df_filt.copy().reset_index(drop=True)
-        # Build human-readable row labels for the selector. Use the same
-        # columns the table renders so the choice is immediately recognizable.
+        # Sort df_filt by the same criterion the Top candidates table uses,
+        # so the selectbox is ordered with the strongest-signal row first.
+        # buy mode (IV-cheap): iv_excess ascending → most-below-surface first.
+        # sell mode (IV-rich): iv_excess descending → most-above-surface first.
+        # Tie-break on open_interest (higher = more liquid = better pick).
+        df_mc = (
+            df_filt.sort_values(
+                ["iv_excess", "open_interest"],
+                ascending=[buy_r, False],
+            )
+            .reset_index(drop=True)
+            .copy()
+        )
+        # The first row is now the auto-fill default: rank-1 from
+        # "Top candidates — all chains" for the current scan direction.
         df_mc["_label"] = (
             df_mc.apply(lambda r: (
                 f"{r.get('type', mode_r).upper()[0]}  "
@@ -1243,8 +1370,18 @@ def _tab_single() -> None:
                 f"exp {pd.to_datetime(r['expiration']).strftime('%b %d %y')}  "
                 f"·  mid ${r.get('mid', 0):.2f}"
                 f"  ·  IV {r.get('iv', 0) * 100:.0f}%"
+                f"  ·  IV+pp {r.get('iv_excess', 0) * 100:+.1f}"
             ), axis=1)
         )
+        # Mark the best one so the user knows the default isn't arbitrary.
+        if len(df_mc) > 0:
+            best_signal = df_mc.iloc[0]["iv_excess"] * 100
+            best_label = df_mc.iloc[0]["_label"]
+            arrow = "▼" if buy_r else "▲"
+            st.caption(
+                f"**Strongest signal:** {arrow} {best_label}  "
+                f"(IV+pp {best_signal:+.1f}, pre-selected below)"
+            )
 
         # Side defaults from scan direction (buy=long, sell=short).
         c_pick, c_side, c_qty, c_btn = st.columns([4, 1.2, 0.8, 1])
@@ -1252,6 +1389,7 @@ def _tab_single() -> None:
             choice_idx = st.selectbox(
                 "Candidate to analyze",
                 df_mc.index,
+                index=0,  # auto-fill: strongest-signal row from the sort above
                 format_func=lambda i: df_mc.at[i, "_label"],
                 key="s_mc_choice",
             )
@@ -1998,7 +2136,7 @@ def _show_payoff_chart(row: pd.Series, spot: float) -> None:
 
 
 def _show_spreads_table(sub: pd.DataFrame, strategy_name: str,
-                        spot: float) -> int | None:
+                        spot: float, key_prefix: str = "sp") -> int | None:
     """Render the ranked spread table. Returns the selected row index or None."""
     if sub.empty:
         st.info(f"No {strategy_name} spreads found matching the filters.")
@@ -2110,7 +2248,7 @@ def _show_spreads_table(sub: pd.DataFrame, strategy_name: str,
         width="stretch",
         on_select="rerun",
         selection_mode="single-row",
-        key=f"sp_tbl_{strategy_name.replace(' ', '_').replace('/', '_').replace('×', 'x')}",
+        key=f"{key_prefix}_tbl_{strategy_name.replace(' ', '_').replace('/', '_').replace('×', 'x')}",
     )
     _stamp_caption()
     selected_rows = event.selection.rows if hasattr(event, "selection") else []
@@ -2358,7 +2496,8 @@ def _render_spreads_view(
             if strategy_name in ("Long Straddle", "Long Strangle"):
                 st.caption("ℹ Max profit is capped at 3× debit for ranking — "
                            "actual upside is unbounded.")
-            selected_idx = _show_spreads_table(sub, strategy_name, spot)
+            selected_idx = _show_spreads_table(sub, strategy_name, spot,
+                                                key_prefix=key_prefix)
 
             if selected_idx is not None and selected_idx < len(sub):
                 row = sub.iloc[selected_idx]

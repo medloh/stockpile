@@ -21,7 +21,7 @@ Public entry points:
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date
 from typing import Any, Iterable, Literal
 
 import altair as alt
@@ -43,21 +43,15 @@ from ui_theme import PALETTE, metric_card
 
 
 def _parse_expiration(value: Any) -> date:
-    """Normalize an expiration date from various row formats to `date`."""
-    if isinstance(value, date) and not isinstance(value, datetime):
-        return value
-    if isinstance(value, datetime):
-        return value.date()
-    if isinstance(value, pd.Timestamp):
-        return value.date()
+    """Normalize an expiration date from various row formats to `date`.
+
+    Handles the scanner's display format ('Jul 17 26 1E') by stripping the
+    custom suffix before delegating to pandas — which already handles ISO,
+    US, and named-month formats.
+    """
     if isinstance(value, str):
-        # Common formats: "2027-01-15", "Jan 26 '27 1E", "01/15/2027"
-        for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%b %d '%y", "%b %d %Y"):
-            try:
-                return datetime.strptime(value.split(" 1E")[0].strip(), fmt).date()
-            except ValueError:
-                continue
-    raise ValueError(f"can't parse expiration: {value!r}")
+        value = value.split(" 1E")[0].strip()
+    return pd.to_datetime(value).date()
 
 
 def position_from_chain_row(
@@ -78,11 +72,10 @@ def position_from_chain_row(
     converted to a per-contract open_cost. IV% (in percent) is converted
     to a decimal fraction.
     """
-    strike = float(row["Strike"]) if "Strike" in row else float(row["strike"])
-    exp_raw = row.get("Expiration") if hasattr(row, "get") else row["Expiration"]
-    expiration = _parse_expiration(exp_raw)
-    mid = float(row["Mid"]) if "Mid" in row else float(row.get("mid", 0.0))
-    iv_pct = float(row.get("IV%", row.get("iv_pct", 0.0)))
+    strike = float(row["Strike"])
+    expiration = _parse_expiration(row["Expiration"])
+    mid = float(row["Mid"])
+    iv_pct = float(row.get("IV%", 0.0))
     iv = iv_pct / 100.0 if iv_pct > 0 else None
 
     # open_cost: long pays the mid (positive debit); short receives it
@@ -157,7 +150,7 @@ def _position_hash(p: Position) -> tuple:
 
 def _config_hash(c: SimulationConfig) -> tuple:
     return (c.n_paths, c.vol_source, c.vol_custom, c.drift,
-            c.earnings_jumps, c.seed)
+            c.earnings_jumps, c.straddle_implied_move, c.seed)
 
 
 @st.cache_data(show_spinner=False, ttl=600)
@@ -471,9 +464,9 @@ def render_mc_panel(
     # its denser line ink; equal widths keep the page rhythm consistent.
     col_paths, col_hist = st.columns(2)
     with col_paths:
-        st.altair_chart(_path_chart(result, position), use_container_width=True)
+        st.altair_chart(_path_chart(result, position), width="stretch")
     with col_hist:
-        st.altair_chart(_pnl_histogram(result), use_container_width=True)
+        st.altair_chart(_pnl_histogram(result), width="stretch")
 
     # ── Assumptions caption ───────────────────────────────────────────
     vol_label = f"IV {vol_custom * 100:.1f}%" if vol_source != "chain_iv" else "chain IV"
