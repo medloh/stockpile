@@ -44,6 +44,10 @@ from display.scan_stamp import (
 )
 from display.payoff_chart import show_payoff_chart
 from display.gex_chart import show_gex_chart
+from display.gex_strikes_table import (
+    fmt_strike_with_dist,
+    show_gex_strikes_of_interest,
+)
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -1454,78 +1458,6 @@ def _tab_single() -> None:
 
 # ── Tab: GEX ─────────────────────────────────────────────────────────────────
 
-def _fmt_strike_with_dist(strike: float | None, spot: float) -> str:
-    """Format a strike alongside its % distance from spot — used to
-    keep the multi-ticker summary table compact (one cell per concept).
-    """
-    if strike is None or pd.isna(strike):
-        return "—"
-    dist = (strike - spot) / spot * 100.0
-    return f"${strike:,.2f} ({dist:+.1f}%)"
-
-
-def _show_gex_strikes_of_interest(df: pd.DataFrame, spot: float) -> None:
-    """Top pinning walls + amp zones by absolute net GEX.
-
-    Same per-strike GEX aggregation as `show_gex_chart`, surfaced as
-    a ranked table for closer inspection.
-    """
-    if df.empty or "gamma" not in df.columns:
-        return
-
-    spot_sq = spot * spot
-    calls = df[df["type"] == "call"].copy()
-    puts  = df[df["type"] == "put"].copy()
-    calls["gex"] =  calls["gamma"] * calls["open_interest"] * 100 * spot_sq
-    puts["gex"]  = -puts["gamma"]  * puts["open_interest"]  * 100 * spot_sq
-
-    per_strike = (
-        pd.concat([calls[["strike", "gex", "open_interest"]],
-                   puts[["strike", "gex", "open_interest"]]])
-        .groupby("strike", as_index=False)
-        .agg({"gex": "sum", "open_interest": "sum"})
-    )
-    if per_strike.empty or per_strike["gex"].abs().sum() == 0:
-        return
-
-    top_n = 3
-    walls = per_strike[per_strike["gex"] > 0].nlargest(top_n, "gex")
-    amps  = per_strike[per_strike["gex"] < 0].nsmallest(top_n, "gex")
-
-    rows = []
-    for _, r in walls.iterrows():
-        rows.append(("Pinning wall", r["strike"], r["gex"], r["open_interest"]))
-    for _, r in amps.iterrows():
-        rows.append(("Amp zone", r["strike"], r["gex"], r["open_interest"]))
-    if not rows:
-        return
-
-    out = pd.DataFrame(rows, columns=["Tag", "Strike", "Net GEX", "Total OI"])
-    out["Dist %"] = (out["Strike"] - spot) / spot * 100.0
-    out = out[["Tag", "Strike", "Dist %", "Net GEX", "Total OI"]]
-    out = out.sort_values("Net GEX", key=lambda s: s.abs(), ascending=False)
-
-    st.subheader("Strikes of interest")
-    st.caption(
-        "**Pinning wall** — large positive dealer gamma at this "
-        "strike. Price tends to gravitate here (resistance for moves "
-        "up, support for moves down). Favorable for covered-call "
-        "strikes just below a wall.  "
-        "**Amp zone** — large negative dealer gamma. Moves through "
-        "this strike tend to accelerate; sellers should size cautiously."
-    )
-    st.dataframe(
-        out, hide_index=True, use_container_width=False,
-        column_config={
-            "Tag":      st.column_config.TextColumn(),
-            "Strike":   st.column_config.NumberColumn(format="$%.2f"),
-            "Dist %":   st.column_config.NumberColumn(format="%+.2f%%"),
-            "Net GEX":  st.column_config.NumberColumn(format="%,.0f"),
-            "Total OI": st.column_config.NumberColumn(format="%,d"),
-        },
-    )
-
-
 def _tab_gex() -> None:
     """GEX-only scanner: fetch near-term chains (0–60 DTE) for one or
     more tickers and surface dealer-gamma context (walls, amp zones,
@@ -1641,9 +1573,9 @@ def _tab_gex() -> None:
             "Spot":      spot,
             "Total GEX": info["total_gex"],
             "Regime":    info["regime"],
-            "Zero-Γ":    _fmt_strike_with_dist(info["zero_gamma"], spot),
-            "Top Wall":  _fmt_strike_with_dist(info["top_wall"], spot),
-            "Top Amp":   _fmt_strike_with_dist(info["top_amp"], spot),
+            "Zero-Γ":    fmt_strike_with_dist(info["zero_gamma"], spot),
+            "Top Wall":  fmt_strike_with_dist(info["top_wall"], spot),
+            "Top Amp":   fmt_strike_with_dist(info["top_amp"], spot),
         })
     summary_df = pd.DataFrame(rows)
     summary_df = (summary_df
@@ -1726,7 +1658,7 @@ def _tab_gex() -> None:
                     provider=st.session_state.get("scan_provider", "yahoo"),
                     ticker=drill)
 
-    _show_gex_strikes_of_interest(df_r, spot)
+    show_gex_strikes_of_interest(df_r, spot)
 
 
 # ── Tab: Portfolio ───────────────────────────────────────────────────────────
