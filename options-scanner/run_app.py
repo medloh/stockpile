@@ -55,88 +55,15 @@ def _apply_theme(theme_name: str) -> None:  # noqa: ARG001 — preserved for com
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
-# Layout-specific overrides that build on top of the design system in
-# ui_theme.py. These cover Streamlit-version-specific behaviors (rescan
-# pill, data-source pill positioning, number-input width caps) that
-# don't belong in the shared theme module.
-st.html(
-    """
-    <style>
-    [data-testid="stDivider"] {
-        margin-top: 0 !important;
-        margin-bottom: 0 !important;
-    }
-    [data-testid="stDivider"] hr {
-        margin-top: 0.15rem !important;
-        margin-bottom: 0.15rem !important;
-    }
-
-    /* Cap number-input widths so the filter row doesn't look like an
-       enterprise intake form. */
-    [data-testid="stNumberInput"] {
-        max-width: 7rem;
-    }
-    [class*="st-key-top_n_align"] {
-        padding-left: 1rem;
-    }
-    [class*="st-key-scan_btn_lift"] {
-        margin-bottom: 0;
-        padding-left: 10px;
-    }
-
-    /* Floating rescan button — pinned to the top header bar just right
-       of the wordmark. Tracks the sidebar shift via the data-sidebar-open
-       observer further down. */
-    [class*="st-key-rescan_pill"] {
-        position: fixed;
-        top: 13px;
-        left: 21rem;
-        transform: none;
-        z-index: 999990;
-        width: auto !important;
-    }
-    body[data-sidebar-open="true"] [class*="st-key-rescan_pill"] {
-        left: 36rem;
-    }
-    [class*="st-key-rescan_pill"] .stButton > button {
-        padding: 0.35rem 0.95rem !important;
-        min-height: 2.5rem;
-        border-radius: 8px !important;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.12);
-        font-weight: 600;
-    }
-
-    /* Data-source segmented control — sits to the right of the rescan
-       pill. The pill keeps its slot even before a scan so the toggle
-       doesn't reflow when results appear. */
-    [class*="st-key-data_source_pill"] {
-        position: fixed;
-        top: 13px;
-        left: 33rem;
-        transform: none;
-        z-index: 999990;
-        width: auto !important;
-    }
-    body[data-sidebar-open="true"] [class*="st-key-data_source_pill"] {
-        left: 48rem;
-    }
-    [class*="st-key-data_source_pill"] [data-testid="stSegmentedControl"] {
-        background: rgba(255, 255, 255, 0.92);
-        border-radius: 8px;
-        box-shadow: 0 1px 3px rgba(15,23,42,0.10);
-        border: 1px solid #DBEAFE;
-    }
-    [class*="st-key-data_source_pill"] button {
-        padding: 0.3rem 0.85rem !important;
-        min-height: 2.5rem;
-        font-weight: 500;
-    }
-    </style>
-    """
-)
+# Load the layout-specific stylesheet that builds on top of the design
+# system in ui_theme.py. See options_scanner/styles.css for the rules.
+_STYLES_CSS = (
+    Path(__file__).parent / "options_scanner" / "styles.css"
+).read_text(encoding="utf-8")
+st.html(f"<style>{_STYLES_CSS}</style>")
 
 # Load config and seed data_source_choice into session_state BEFORE the
-# dynamic CSS block below reads it.
+# dynamic accent-color block below reads it.
 from options_scanner.config import load_config, get_provider, get_schwab_config as _get_schwab_cfg
 _app_cfg = load_config()
 _cfg_provider = get_provider(_app_cfg)
@@ -152,11 +79,12 @@ if "data_source_choice" not in st.session_state:
         "schwab" if (_cfg_provider == "schwab" and _schwab_configured) else "yahoo"
     )
 
-# Primary buttons and the data-source pill's active state recolor based on
-# which data source is selected: green for Yahoo, blue for Schwab. Reads
-# `data_source_choice` (the widget key) — NOT the effective `data_source` —
-# so the color flips on the same rerun the dropdown changed, and clicking
-# Scan doesn't trigger spurious color flips.
+# Inject the dynamic accent colors as CSS custom properties. Primary
+# buttons and the data-source pill's active state read --primary /
+# --primary-hover from styles.css. Reads `data_source_choice` (the
+# widget key) — NOT the effective `data_source` — so the color flips
+# on the same rerun the dropdown changed, and clicking Scan doesn't
+# trigger spurious color flips.
 _BTN_COLORS = {
     "yahoo":  ("#16a34a", "#15803d"),   # normal, hover
     "schwab": ("#2563eb", "#1d4ed8"),
@@ -166,77 +94,14 @@ _btn_bg, _btn_hover = _BTN_COLORS.get(
     _BTN_COLORS["yahoo"],
 )
 st.html(
-    f"""
-    <style>
-    .stButton > button[kind="primary"],
-    button[data-testid="stBaseButton-primary"] {{
-        background-color: {_btn_bg} !important;
-        border-color: {_btn_bg} !important;
-    }}
-    .stButton > button[kind="primary"]:hover,
-    button[data-testid="stBaseButton-primary"]:hover {{
-        background-color: {_btn_hover} !important;
-        border-color: {_btn_hover} !important;
-    }}
-    [class*="st-key-data_source_pill"] button[aria-pressed="true"],
-    [class*="st-key-data_source_pill"] button[aria-selected="true"],
-    [class*="st-key-data_source_pill"] button[data-testid*="Active"] {{
-        color: {_btn_bg} !important;
-        border-color: {_btn_bg} !important;
-        box-shadow: inset 0 0 0 1px {_btn_bg} !important;
-    }}
-    [class*="st-key-data_source_pill"] button[aria-pressed="true"] p,
-    [class*="st-key-data_source_pill"] button[aria-selected="true"] p,
-    [class*="st-key-data_source_pill"] button[data-testid*="Active"] p {{
-        color: {_btn_bg} !important;
-    }}
-    </style>
-    """
+    f"<style>:root {{ --primary: {_btn_bg}; "
+    f"--primary-hover: {_btn_hover}; }}</style>"
 )
 
-# Brand wordmark pinned to the top header bar. Replaces the legacy
-# raster-logo overlay with a typographic mark — sharper, scales cleanly,
-# and matches the rest of the design system.
+# Brand wordmark pinned to the top header bar. The styling lives in
+# styles.css; only the markup is emitted here.
 st.html(
     """
-    <style>
-    .osc-wordmark-overlay {
-        position: fixed;
-        top: 14px;
-        left: 5rem;
-        height: 2.5rem;
-        display: flex;
-        align-items: center;
-        z-index: 999991;
-        pointer-events: none;
-        gap: 0.55rem;
-        font-family: 'Inter', system-ui, sans-serif;
-    }
-    @media (prefers-reduced-motion: no-preference) {
-        .osc-wordmark-overlay { transition: left 0.2s ease; }
-    }
-    body[data-sidebar-open="true"] .osc-wordmark-overlay {
-        left: 20rem;
-    }
-    .osc-wordmark-overlay .osc-wm-dot {
-        width: 8px; height: 8px; border-radius: 50%;
-        background: #1E40AF;
-        display: inline-block;
-    }
-    .osc-wordmark-overlay .osc-wm-brand {
-        font-weight: 700;
-        font-size: 0.95rem;
-        letter-spacing: -0.01em;
-        color: #0F172A;
-    }
-    .osc-wordmark-overlay .osc-wm-suffix {
-        font-size: 0.66rem;
-        font-weight: 500;
-        letter-spacing: 0.18em;
-        text-transform: uppercase;
-        color: #64748B;
-    }
-    </style>
     <div class='osc-wordmark-overlay' aria-hidden='true'>
       <span class='osc-wm-dot'></span>
       <span class='osc-wm-brand'>STOCKPILE</span>
