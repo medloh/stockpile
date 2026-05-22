@@ -55,19 +55,14 @@ options-scanner/
 
 Highest leverage by far — every other refactor gets easier afterward.
 
-## 2. Extract inline CSS to a real file
+## 2. Extract inline CSS to a real file ✅ DONE 2026-05-22
 
-Currently a triple-quoted blob inside `run_app.py`. Move to
-`options-scanner/options_scanner/styles.css`, load via:
-
-```python
-from pathlib import Path
-_CSS = (Path(__file__).parent / "options_scanner" / "styles.css").read_text()
-st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
-```
-
-Gains: editor syntax highlighting, CSS comments without escaping,
-easier diffs, no `f""" ... """` interpolation hazards. Cheap win.
+CSS now lives in `options_scanner/styles.css`, loaded once at the
+top of `run_app.py` via `Path.read_text()`. The dynamic accent
+colors flow through CSS custom properties (`--primary`,
+`--primary-hover`) instead of f-string interpolation — run_app
+injects a 2-line `:root` block per rerun and all the rule
+selectors reference `var(--primary)`.
 
 ## 3. DRY the chain row-building between Yahoo and Schwab
 
@@ -98,29 +93,19 @@ and `tests/conftest.py` are gone; all imports use absolute
 `display.py` / `display/` package collision by folding the CLI
 results-printer into `display/cli.py`.
 
-## 5. Magic numbers in CSS layout → named constants
+## 5. Magic numbers in CSS layout → named constants ✅ DONE 2026-05-22
 
-The title-bar pill positioning relies on `left: 18rem`, `left: 30rem`,
-`left: 33rem`, `left: 45rem`, `top: 13px`, and a hardcoded `12rem`
-favicon-width assumption. A Streamlit version bump could shift any of
-these and break the layout silently.
+Layout magic numbers are now CSS custom properties at the top of
+`styles.css`: `--pill-top`, `--wordmark-top`, `--sidebar-shift`,
+`--wordmark-left`, `--rescan-pill-left`,
+`--data-source-pill-left`, `--z-pill`, `--z-wordmark`. The
+sidebar-open variants use `calc(var(--pill-left) +
+var(--sidebar-shift))` so the three pills track each other through
+a single offset value. If a Streamlit version bump changes the
+sidebar's open width, only `--sidebar-shift` needs touching.
 
-After (2) lands, define these as CSS custom properties at the top of
-`styles.css`:
-
-```css
-:root {
-  --logo-width: 12rem;
-  --pill-top: 13px;
-  --pill-left-collapsed: 18rem;
-  --pill-left-expanded: 33rem;
-  ...
-}
-```
-
-Then individual rules reference `var(--pill-left-collapsed)`. One
-source of truth per layout dimension, and the constants are visible
-when debugging.
+The `--logo-width: 12rem` REFACTOR.md item disappeared on its own
+when the raster logo was replaced by the typographic wordmark.
 
 ---
 

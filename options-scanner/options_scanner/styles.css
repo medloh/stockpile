@@ -3,11 +3,31 @@
    (rescan pill, data-source pill positioning, number-input width caps)
    that don't belong in the shared theme module.
 
-   Dynamic colors come from CSS custom properties on :root, set
+   Dynamic accent colors come from CSS custom properties on :root, set
    per-rerun by run_app.py based on the active data source:
        --primary        # main accent (green=Yahoo, blue=Schwab)
        --primary-hover  # darker shade for :hover states
 */
+
+:root {
+    /* Title-bar pill positioning. Each pill has a fixed left offset
+       in the collapsed-sidebar layout; opening the sidebar shifts
+       all three rightward by --sidebar-shift in lockstep. Adjust
+       this one value if a Streamlit version bump changes the
+       sidebar's open width. */
+    --pill-top:               13px;
+    --wordmark-top:           14px;       /* 1px below the pills */
+    --sidebar-shift:          15rem;
+
+    --wordmark-left:           5rem;
+    --rescan-pill-left:       21rem;
+    --data-source-pill-left:  33rem;
+
+    /* z-index layering for the fixed-position overlays. Both sit
+       above Streamlit's own chrome (which tops out around 999000). */
+    --z-pill:                 999990;
+    --z-wordmark:             999991;
+}
 
 [data-testid="stDivider"] {
     margin-top: 0 !important;
@@ -36,14 +56,14 @@
    observer wired up in run_app.py. */
 [class*="st-key-rescan_pill"] {
     position: fixed;
-    top: 13px;
-    left: 21rem;
+    top: var(--pill-top);
+    left: var(--rescan-pill-left);
     transform: none;
-    z-index: 999990;
+    z-index: var(--z-pill);
     width: auto !important;
 }
 body[data-sidebar-open="true"] [class*="st-key-rescan_pill"] {
-    left: 36rem;
+    left: calc(var(--rescan-pill-left) + var(--sidebar-shift));
 }
 [class*="st-key-rescan_pill"] .stButton > button {
     padding: 0.35rem 0.95rem !important;
@@ -58,14 +78,14 @@ body[data-sidebar-open="true"] [class*="st-key-rescan_pill"] {
    doesn't reflow when results appear. */
 [class*="st-key-data_source_pill"] {
     position: fixed;
-    top: 13px;
-    left: 33rem;
+    top: var(--pill-top);
+    left: var(--data-source-pill-left);
     transform: none;
-    z-index: 999990;
+    z-index: var(--z-pill);
     width: auto !important;
 }
 body[data-sidebar-open="true"] [class*="st-key-data_source_pill"] {
-    left: 48rem;
+    left: calc(var(--data-source-pill-left) + var(--sidebar-shift));
 }
 [class*="st-key-data_source_pill"] [data-testid="stSegmentedControl"] {
     background: rgba(255, 255, 255, 0.92);
@@ -112,12 +132,12 @@ button[data-testid="stBaseButton-primary"]:hover {
    styling). */
 .osc-wordmark-overlay {
     position: fixed;
-    top: 14px;
-    left: 5rem;
+    top: var(--wordmark-top);
+    left: var(--wordmark-left);
     height: 2.5rem;
     display: flex;
     align-items: center;
-    z-index: 999991;
+    z-index: var(--z-wordmark);
     pointer-events: none;
     gap: 0.55rem;
     font-family: 'Inter', system-ui, sans-serif;
@@ -126,7 +146,7 @@ button[data-testid="stBaseButton-primary"]:hover {
     .osc-wordmark-overlay { transition: left 0.2s ease; }
 }
 body[data-sidebar-open="true"] .osc-wordmark-overlay {
-    left: 20rem;
+    left: calc(var(--wordmark-left) + var(--sidebar-shift));
 }
 .osc-wordmark-overlay .osc-wm-dot {
     width: 8px; height: 8px; border-radius: 50%;
