@@ -48,6 +48,13 @@ from display.gex_strikes_table import (
     fmt_strike_with_dist,
     show_gex_strikes_of_interest,
 )
+from display.chain_styling import (
+    CELL_WARN,
+    BID_HELP,
+    OI_HELP,
+    VOL_HELP,
+    ivpp_help_for,
+)
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -225,46 +232,10 @@ def _low_vol_mask(vol: pd.Series, min_vol: int) -> list[bool]:
     return [v < thresh for v in vol.tolist()]
 
 
-_CELL_WARN = "background-color: rgba(234,179,8,0.45)"
-_BID_HELP  = ("Yellow: spread is wider than 1.5× the median for this table"
-              " — higher execution cost.")
-_OI_HELP   = ("Yellow: OI is below 2× the min OI filter"
-              " — limited liquidity, harder to fill at a good price.")
-_IVPP_HELP = ("Percentage points the option's IV sits above the fitted"
-              " volatility surface. Positive = richer than peers at a"
-              " similar strike and DTE. Under ~3 pp is noise; 5+ pp is"
-              " a genuine signal.")
-
-
-def _ivpp_help_for(buy: bool, opt_type: str = "option") -> str:
-    """Tooltip text for the IV+pp column, tailored to the user's scan.
-
-    The number's sign is interpreted opposite for sellers vs buyers — a
-    +5 pp call is great if you're SELLING it (rich premium collected)
-    and bad if you're BUYING it (overpaying). The tooltip switches
-    accordingly so the user doesn't have to remember the convention.
-    """
-    plural = {"call": "calls", "put": "puts", "both": "options"}.get(
-        opt_type.lower(), "options"
-    )
-    if buy:
-        # Buyer wants cheap → negative IV+pp.
-        return (
-            f"Percentage points the option's IV sits ABOVE (+) or BELOW (−)"
-            f" the fitted volatility surface. You're BUYING {plural} — you want"
-            f" NEGATIVE values (the option is cheap relative to its peers, so"
-            f" you pay less than the surface implies). Look for −3 pp or lower;"
-            f" near 0 sits on the surface; positive means you're paying above it."
-        )
-    # Seller wants rich → positive IV+pp.
-    return (
-        f"Percentage points the option's IV sits ABOVE (+) or BELOW (−)"
-        f" the fitted volatility surface. You're SELLING {plural} — you want"
-        f" POSITIVE values (the option is rich relative to its peers, so you"
-        f" collect more than fair). Look for +5 pp or higher; under +3 pp is"
-        f" noise; negative means the chain isn't paying a premium."
-    )
-_VOL_HELP  = "Yellow: fewer than 4 contracts traded today — very thin activity."
+# Chain-table cell styling + tooltip helpers moved to
+# display.chain_styling. Imported below alongside the other display
+# modules. The dead static _IVPP_HELP constant was removed during the
+# move — ivpp_help_for has been the sole tooltip source since PR #9.
 
 
 # Scan-provenance stamp helpers + provider identity constants moved to
@@ -423,11 +394,11 @@ def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
 
     styled = (
         disp.style
-        .apply(lambda _: [_CELL_WARN if w else "" for w in wide],
+        .apply(lambda _: [CELL_WARN if w else "" for w in wide],
                subset=["Bid", "Ask"])
-        .apply(lambda _: [_CELL_WARN if l else "" for l in lo],
+        .apply(lambda _: [CELL_WARN if l else "" for l in lo],
                subset=["OI"])
-        .apply(lambda _: [_CELL_WARN if v else "" for v in low_vol],
+        .apply(lambda _: [CELL_WARN if v else "" for v in low_vol],
                subset=["Vol"])
     )
 
@@ -436,24 +407,24 @@ def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
         "Expiration": st.column_config.TextColumn("Expiration", width=105),
         "DTE":   st.column_config.NumberColumn("DTE", format="%d", width=55),
         "Bid":   st.column_config.NumberColumn("Bid", format="$%.2f",
-                                               width=70, help=_BID_HELP),
+                                               width=70, help=BID_HELP),
         "Ask":   st.column_config.NumberColumn("Ask", format="$%.2f",
-                                               width=70, help=_BID_HELP),
+                                               width=70, help=BID_HELP),
         "Mid":   st.column_config.NumberColumn("Mid", format="$%.2f",
                                                width=70),
         "IV%":   st.column_config.NumberColumn("IV%", format="%.1f%%",
                                                width=70),
         "IV+pp": st.column_config.NumberColumn("IV+pp", format="%+.1f pp",
                                                width=75,
-                                               help=_ivpp_help_for(buy, opt_type)),
+                                               help=ivpp_help_for(buy, opt_type)),
         "Delta": st.column_config.NumberColumn("Delta", format="%.2f",
                                                width=60),
         "Ann%":  st.column_config.NumberColumn("Ann%", format="%.1f%%",
                                                width=65),
         "OI":    st.column_config.NumberColumn("OI", format="%d",
-                                               width=65, help=_OI_HELP),
+                                               width=65, help=OI_HELP),
         "Vol":   st.column_config.NumberColumn("Vol", format="%d",
-                                               width=65, help=_VOL_HELP),
+                                               width=65, help=VOL_HELP),
     }
     if roll_close_cost is not None:
         col_cfg["NetCr"] = st.column_config.NumberColumn("Net Credit",
@@ -765,11 +736,11 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
     styled = (
         disp.style
         .apply(_row_bg, axis=1)
-        .apply(lambda _: [_CELL_WARN if w else "" for w in wide],
+        .apply(lambda _: [CELL_WARN if w else "" for w in wide],
                subset=["Bid", "Ask"])
-        .apply(lambda _: [_CELL_WARN if l else "" for l in lo],
+        .apply(lambda _: [CELL_WARN if l else "" for l in lo],
                subset=["OI"])
-        .apply(lambda _: [_CELL_WARN if v else "" for v in low_vol],
+        .apply(lambda _: [CELL_WARN if v else "" for v in low_vol],
                subset=["Vol"])
     )
 
@@ -784,24 +755,24 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
         "Strike": st.column_config.TextColumn("Strike", width=75),
         "DTE":   st.column_config.NumberColumn("DTE", format="%d", width=55),
         "Bid":   st.column_config.NumberColumn("Bid", format="$%.2f",
-                                               width=70, help=_BID_HELP),
+                                               width=70, help=BID_HELP),
         "Ask":   st.column_config.NumberColumn("Ask", format="$%.2f",
-                                               width=70, help=_BID_HELP),
+                                               width=70, help=BID_HELP),
         "Mid":   st.column_config.NumberColumn("Mid", format="$%.2f",
                                                width=70),
         "IV%":   st.column_config.NumberColumn("IV%", format="%.1f%%",
                                                width=70),
         "IV+pp": st.column_config.NumberColumn("IV+pp", format="%+.1f pp",
                                                width=75,
-                                               help=_ivpp_help_for(buy, mode)),
+                                               help=ivpp_help_for(buy, mode)),
         "Delta": st.column_config.NumberColumn("Delta", format="%.2f",
                                                width=60),
         "Ann%":  st.column_config.NumberColumn("Ann%", format="%.1f%%",
                                                width=65),
         "OI":    st.column_config.NumberColumn("OI", format="%d",
-                                               width=65, help=_OI_HELP),
+                                               width=65, help=OI_HELP),
         "Vol":   st.column_config.NumberColumn("Vol", format="%d",
-                                               width=65, help=_VOL_HELP),
+                                               width=65, help=VOL_HELP),
     }
     if roll_close_cost is not None:
         col_cfg["NetCr"] = st.column_config.NumberColumn("Net Credit",
