@@ -6,27 +6,12 @@ from datetime import date, datetime
 
 import pandas as pd
 
+from options_scanner.chain_common import build_option_row, safe_float, safe_int
 from stocks_shared.yahoo import fetch_live_price, normalize_ticker
 
 log = logging.getLogger(__name__)
 
 _RISK_FREE_RATE = 0.045
-
-
-def _safe_float(val, default: float = 0.0) -> float:
-    try:
-        f = float(val)
-        return f if math.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(val, default: int = 0) -> int:
-    try:
-        f = float(val)
-        return int(f) if math.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
 
 
 def _norm_cdf(x: float) -> float:
@@ -100,49 +85,25 @@ def _fetch_chain_yahoo(ticker: str, opt_type: str = "both",
             if df is None or df.empty:
                 continue
             for _, row in df.iterrows():
-                K = _safe_float(row.get("strike"))
-                bid = _safe_float(row.get("bid"))
-                ask = _safe_float(row.get("ask"))
-                last = _safe_float(row.get("lastPrice"))
-                iv = _safe_float(row.get("impliedVolatility"))
-                oi = _safe_int(row.get("openInterest"))
-                volume = _safe_int(row.get("volume"))
-
-                if bid <= 0 and ask <= 0:
-                    continue
-                mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
-                if mid <= 0 or iv < 0.01 or K <= 0:
-                    continue
-
-                log_m = math.log(K / spot)
+                K = safe_float(row.get("strike"))
+                if K <= 0:
+                    continue  # math.log(spot / K) below blows up at K=0
+                iv = safe_float(row.get("impliedVolatility"))
                 delta = _bs_delta(spot, K, T, _RISK_FREE_RATE, iv, side)
                 gamma = _bs_gamma(spot, K, T, _RISK_FREE_RATE, iv)
-                capital = spot if side == "call" else K
-                # 0DTE rows (same-day expiry) get clamped to 1 day for
-                # the annualization — yield is meaningless at this scale
-                # anyway, but the row's gamma/OI are still useful (GEX).
-                ann_yield = (mid / capital) * (365.0 / max(dte, 1)) * 100.0
-
-                rows.append({
-                    "type":          side,
-                    "strike":        K,
-                    "expiration":    exp_str,
-                    "dte":           dte,
-                    "spot":          spot,
-                    "log_moneyness": log_m,
-                    "bid":           bid,
-                    "ask":           ask,
-                    "mid":           mid,
-                    "iv":            iv,
-                    "iv_fitted":     iv,
-                    "iv_excess":     0.0,
-                    "delta":         delta,
-                    "gamma":         gamma,
-                    "ann_yield_pct": ann_yield,
-                    "open_interest": oi,
-                    "volume":        volume,
-                    "earnings_count": 0,
-                })
+                built = build_option_row(
+                    side=side, strike=K, expiration=exp_str,
+                    dte=dte, spot=spot,
+                    bid=safe_float(row.get("bid")),
+                    ask=safe_float(row.get("ask")),
+                    mid=0.0,
+                    last=safe_float(row.get("lastPrice")),
+                    iv=iv, delta=delta, gamma=gamma,
+                    open_interest=safe_int(row.get("openInterest")),
+                    volume=safe_int(row.get("volume")),
+                )
+                if built is not None:
+                    rows.append(built)
 
     return pd.DataFrame(rows) if rows else pd.DataFrame()
 

@@ -64,24 +64,22 @@ colors flow through CSS custom properties (`--primary`,
 injects a 2-line `:root` block per rerun and all the rule
 selectors reference `var(--primary)`.
 
-## 3. DRY the chain row-building between Yahoo and Schwab
+## 3. DRY the chain row-building between Yahoo and Schwab ✅ DONE 2026-05-22
 
-`chain.py` and `schwab_chain.py` are ~90% structural duplicates: same
-17-column schema, same `_safe_float`/`_safe_int` helpers, same
-quote-quality filters, same annualization formula. The 0DTE fix had
-to land in both — that pattern will repeat as we add columns or
-filters.
+The shared half lives in `chain_common.py` now:
 
-Options:
+- `safe_float` / `safe_int` (formerly duplicated as `_safe_float` /
+  `_safe_int` in both modules; underscores dropped on promotion).
+- `build_option_row(...)` — applies the quote-quality filters
+  (bid/ask non-zero, mid fallback via (bid+ask)/2 → last, mid > 0,
+  iv ≥ 0.01, strike > 0) and assembles the canonical 17-column row.
+  Returns None to drop a row.
 
-- Extract a `_build_option_row(side, K, bid, ask, mid, iv, oi, vol,
-  delta, gamma, dte, spot, exp_str)` helper used by both paths.
-- Or centralize the schema as a typed dict / dataclass so adding a
-  column touches one place, not two.
-
-The Schwab path also gets its Greeks from the broker (no BS math
-needed), so the two flows aren't identical — the shared piece is the
-row assembly + filters, not the Greeks computation.
+Each provider keeps its own raw-data parsing (Yahoo iterates
+yfinance DataFrames, Schwab iterates the JSON expiration map) and
+funnels through `build_option_row` at the end. Greeks stay
+provider-specific: chain.py computes BS delta/gamma, schwab_chain.py
+takes them from the broker — `build_option_row` is Greek-agnostic.
 
 ## 4. Convert `src/` to a proper Python package ✅ DONE 2026-05-22
 

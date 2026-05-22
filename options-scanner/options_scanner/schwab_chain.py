@@ -6,27 +6,12 @@ Uses Schwab's native Greeks instead of Black-Scholes estimates.
 """
 
 import logging
-import math
 
 import pandas as pd
 
+from options_scanner.chain_common import build_option_row, safe_float, safe_int
+
 log = logging.getLogger(__name__)
-
-
-def _safe_float(val, default: float = 0.0) -> float:
-    try:
-        f = float(val)
-        return f if math.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
-
-
-def _safe_int(val, default: int = 0) -> int:
-    try:
-        f = float(val)
-        return int(f) if math.isfinite(f) else default
-    except (TypeError, ValueError):
-        return default
 
 
 def fetch_chain_schwab(ticker: str, opt_type: str = "both",
@@ -79,58 +64,34 @@ def fetch_chain_schwab(ticker: str, opt_type: str = "both",
 
             for opts in strikes.values():
                 for opt in opts:
-                    K = _safe_float(opt.get("strikePrice"))
-                    bid = _safe_float(opt.get("bid"))
-                    ask = _safe_float(opt.get("ask"))
-                    mid = _safe_float(opt.get("mark"))
-                    last = _safe_float(opt.get("last"))
-                    # Schwab returns IV as a percentage (e.g., 45.5 = 45.5%)
-                    iv = _safe_float(opt.get("volatility")) / 100.0
-                    delta = _safe_float(opt.get("delta"))
-                    gamma = _safe_float(opt.get("gamma"))
-                    oi = _safe_int(opt.get("openInterest"))
-                    volume = _safe_int(opt.get("totalVolume"))
-                    dte = _safe_int(opt.get("daysToExpiration"))
-
-                    if bid <= 0 and ask <= 0:
-                        continue
-                    if mid <= 0:
-                        mid = (bid + ask) / 2 if bid > 0 and ask > 0 else last
-                    if mid <= 0 or iv < 0.01 or K <= 0 or dte <= 0:
-                        continue
-                    if dte < min_dte:
+                    dte = safe_int(opt.get("daysToExpiration"))
+                    # Schwab returns 0DTE rows even for past expirations
+                    # and rows outside the requested DTE window; filter
+                    # them here since the API doesn't honor the bounds
+                    # strictly.
+                    if dte <= 0 or dte < min_dte:
                         continue
                     if max_dte is not None and dte > max_dte:
                         continue
-
-                    log_m = math.log(K / spot)
-                    capital = spot if side == "call" else K
-                    # 0DTE rows (same-day expiry) get clamped to 1 day
-                    # for the annualization — yield is meaningless at
-                    # this scale, but the row's gamma/OI are still
-                    # useful (GEX).
-                    ann_yield = (mid / capital) * (365.0 / max(dte, 1)) * 100.0
-
-                    rows.append({
-                        "type":          side,
-                        "strike":        K,
-                        "expiration":    exp_str,
-                        "dte":           dte,
-                        "spot":          spot,
-                        "log_moneyness": log_m,
-                        "bid":           bid,
-                        "ask":           ask,
-                        "mid":           mid,
-                        "iv":            iv,
-                        "iv_fitted":     iv,
-                        "iv_excess":     0.0,
-                        "delta":         delta,
-                        "gamma":         gamma,
-                        "ann_yield_pct": ann_yield,
-                        "open_interest": oi,
-                        "volume":        volume,
-                        "earnings_count": 0,
-                    })
+                    built = build_option_row(
+                        side=side,
+                        strike=safe_float(opt.get("strikePrice")),
+                        expiration=exp_str,
+                        dte=dte,
+                        spot=spot,
+                        bid=safe_float(opt.get("bid")),
+                        ask=safe_float(opt.get("ask")),
+                        mid=safe_float(opt.get("mark")),
+                        last=safe_float(opt.get("last")),
+                        # Schwab returns IV as a percentage (45.5 = 45.5%)
+                        iv=safe_float(opt.get("volatility")) / 100.0,
+                        delta=safe_float(opt.get("delta")),
+                        gamma=safe_float(opt.get("gamma")),
+                        open_interest=safe_int(opt.get("openInterest")),
+                        volume=safe_int(opt.get("totalVolume")),
+                    )
+                    if built is not None:
+                        rows.append(built)
 
     log.info(
         "  Schwab: %d options across %d unique expirations for %s",
