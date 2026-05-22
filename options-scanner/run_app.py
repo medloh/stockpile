@@ -33,6 +33,7 @@ from ui_theme import (
 )
 from mc_ui import LegSpec, position_from_chain_row, position_from_legs, render_mc_panel
 from compute.top_ranks import compute_top_ranks
+from compute.gex_summary import compute_gex_summary
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -1648,48 +1649,6 @@ def _tab_single() -> None:
 
 # ── Tab: GEX ─────────────────────────────────────────────────────────────────
 
-def _compute_gex_summary(df: pd.DataFrame, spot: float) -> dict | None:
-    """Per-ticker GEX summary: total, regime, zero-gamma flip, and the
-    strongest pinning wall + amp zone. Same math as `_show_gex_chart`,
-    distilled to single numbers for the multi-ticker summary table.
-    """
-    if df.empty or "gamma" not in df.columns:
-        return None
-    spot_sq = spot * spot
-    calls = df[df["type"] == "call"].copy()
-    puts  = df[df["type"] == "put"].copy()
-    calls["gex"] =  calls["gamma"] * calls["open_interest"] * 100 * spot_sq
-    puts["gex"]  = -puts["gamma"]  * puts["open_interest"]  * 100 * spot_sq
-    per_strike = (
-        pd.concat([calls[["strike", "gex"]], puts[["strike", "gex"]]])
-        .groupby("strike", as_index=False)["gex"].sum()
-        .sort_values("strike")
-    )
-    if per_strike.empty or per_strike["gex"].abs().sum() == 0:
-        return None
-
-    total_gex = float(per_strike["gex"].sum())
-    cumulative = per_strike["gex"].cumsum()
-    zero_strikes = per_strike["strike"][cumulative >= 0]
-    zero_gamma = (float(zero_strikes.min())
-                  if not zero_strikes.empty else float("nan"))
-
-    walls = per_strike[per_strike["gex"] > 0]
-    amps  = per_strike[per_strike["gex"] < 0]
-    top_wall = (float(walls.loc[walls["gex"].idxmax(), "strike"])
-                if not walls.empty else None)
-    top_amp  = (float(amps.loc[amps["gex"].idxmin(), "strike"])
-                if not amps.empty else None)
-
-    return {
-        "total_gex": total_gex,
-        "regime": "Pinning" if total_gex >= 0 else "Amplifying",
-        "zero_gamma": zero_gamma,
-        "top_wall": top_wall,
-        "top_amp": top_amp,
-    }
-
-
 def _fmt_strike_with_dist(strike: float | None, spot: float) -> str:
     """Format a strike alongside its % distance from spot — used to
     keep the multi-ticker summary table compact (one cell per concept).
@@ -1835,7 +1794,7 @@ def _tab_gex() -> None:
                 failed.append((t, "no options in 0–60 DTE"))
                 continue
             spot = float(df["spot"].iloc[0])
-            summary = _compute_gex_summary(df, spot)
+            summary = compute_gex_summary(df, spot)
             if summary is None:
                 failed.append((t, "no GEX data (missing gamma/OI)"))
                 continue
