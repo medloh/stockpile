@@ -32,6 +32,7 @@ from ui_theme import (
     wordmark,
 )
 from mc_ui import LegSpec, position_from_chain_row, position_from_legs, render_mc_panel
+from compute.top_ranks import compute_top_ranks
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -207,35 +208,6 @@ def _low_oi_mask(oi: pd.Series, min_oi: int) -> list[bool]:
 def _low_vol_mask(vol: pd.Series, min_vol: int) -> list[bool]:
     thresh = max(min_vol * 2, 4)
     return [v < thresh for v in vol.tolist()]
-
-
-def _compute_top_ranks(df: pd.DataFrame, mode: str, buy: bool,
-                       min_oi: int, top_n: int,
-                       min_vol: int = 0,
-                       ) -> dict[tuple[str, float, str], int]:
-    """Return {(type, strike, expiration): rank} for top-N candidates,
-    where rank is 1-indexed per option type. Same ranking logic the
-    bottom table and the chart picks use, factored out so the chart
-    and chain table can label each pick with its position.
-    """
-    if df.empty:
-        return {}
-    iv_asc = buy
-    pick_types = ["call", "put"] if mode == "both" else [mode]
-    ranks: dict[tuple[str, float, str], int] = {}
-    for t in pick_types:
-        ranked = (
-            df[(df["type"] == t)
-               & (df["open_interest"] >= min_oi)
-               & (df["volume"] >= min_vol)]
-            .sort_values(["iv_excess", "open_interest"],
-                         ascending=[iv_asc, False])
-            .head(top_n)
-            .reset_index(drop=True)
-        )
-        for i, r in ranked.iterrows():
-            ranks[(r["type"], float(r["strike"]), r["expiration"])] = i + 1
-    return ranks
 
 
 _CELL_WARN = "background-color: rgba(234,179,8,0.45)"
@@ -546,7 +518,7 @@ def _show_iv_chart(df: pd.DataFrame, spot: float, mode: str,
     if chart_df.empty:
         return
 
-    top_ranks = _compute_top_ranks(
+    top_ranks = compute_top_ranks(
         chart_df, mode, buy, min_oi, top_n, min_vol,
     )
     chart_df["is_top"] = chart_df.apply(
@@ -1481,7 +1453,7 @@ def _tab_single() -> None:
         else:
             chain_title = exp_lbl
         st.subheader(chain_title)
-        top_ranks = _compute_top_ranks(
+        top_ranks = compute_top_ranks(
             df_filt, mode_r, buy_r, res["min_oi"], res["top_n"],
             res.get("min_vol", 0),
         )
