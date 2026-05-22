@@ -63,6 +63,7 @@ from display.iv_chart import show_iv_chart
 from display.chain_table import show_chain_table
 from display.outlook_card import render_outlook_card
 from display.portfolio_action_card import render_portfolio_action_card
+from fetch import fetch_and_enrich, fetch_position
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -176,47 +177,6 @@ def _show_validation(issues: list, row_count: int, parse_error: str | None,
         st.dataframe(styled, hide_index=True, width="stretch")
 
     return not errors
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _fetch_and_enrich(ticker: str, opt_type: str, min_dte: int,
-                      max_dte: int | None, provider: str = "yahoo",
-                      schwab_config: dict | None = None):
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
-    try:
-        df = fetch_chain(ticker, opt_type=opt_type, min_dte=min_dte,
-                         max_dte=max_dte, provider=provider,
-                         schwab_config=schwab_config)
-    except ValueError as exc:
-        return pd.DataFrame(), [], str(exc)
-    if df.empty:
-        return df, [], None
-    df = compute_iv_excess(df)
-    earnings = fetch_earnings_dates(ticker)
-    df = annotate_earnings(df, earnings)
-    return df, earnings, None
-
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _fetch_position(ticker: str, min_dte: int, provider: str = "yahoo",
-                    schwab_config: dict | None = None):
-    """Cached per-ticker chain fetch for portfolio tab."""
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
-    try:
-        df = fetch_chain(ticker, opt_type="calls", min_dte=min_dte,
-                         provider=provider, schwab_config=schwab_config)
-    except ValueError as exc:
-        return pd.DataFrame(), [], str(exc)
-    if df.empty:
-        return df, [], None
-    df = compute_iv_excess(df)
-    earnings = fetch_earnings_dates(ticker)
-    df = annotate_earnings(df, earnings)
-    return df, earnings, None
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
@@ -494,7 +454,7 @@ def _tab_single() -> None:
         delta_min, delta_max = delta_range
 
         with st.spinner(f"Fetching {ticker_clean} option chain…"):
-            df, earnings_dates, err = _fetch_and_enrich(
+            df, earnings_dates, err = fetch_and_enrich(
                 ticker_clean, eff_opt_fetch, int(min_dte), max_dte_arg,
                 st.session_state.get("data_source", "yahoo"),
                 st.session_state.get("schwab_config"),
@@ -921,7 +881,7 @@ def _tab_gex() -> None:
                 i / len(tickers),
                 text=f"Fetching {t} ({i}/{len(tickers)})…",
             )
-            df, earnings, err = _fetch_and_enrich(
+            df, earnings, err = fetch_and_enrich(
                 t, "both", 0, 60,
                 st.session_state.get("data_source", "yahoo"),
                 st.session_state.get("schwab_config"),
@@ -1176,7 +1136,7 @@ def _tab_portfolio() -> None:
             progress.progress((i + 1) / len(positions),
                               text=f"Scanning {ticker} ({i+1}/{len(positions)})…")
 
-            df, earnings_dates, err = _fetch_position(
+            df, earnings_dates, err = fetch_position(
                 ticker, int(port_min_dte), _provider, _scfg
             )
 
@@ -1599,7 +1559,7 @@ def _render_spreads_view(
             return
 
         with st.spinner(f"Fetching {ticker_clean} option chain…"):
-            df, earnings_dates, err = _fetch_and_enrich(
+            df, earnings_dates, err = fetch_and_enrich(
                 ticker_clean, "both", int(min_dte), int(max_dte),
                 st.session_state.get("data_source", "yahoo"),
                 st.session_state.get("schwab_config"),
