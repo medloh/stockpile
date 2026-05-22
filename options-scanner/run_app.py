@@ -54,7 +54,11 @@ from display.chain_styling import (
     OI_HELP,
     VOL_HELP,
     ivpp_help_for,
+    wide_spread_mask,
+    low_oi_mask,
+    low_vol_mask,
 )
+from display.scan_results import show_df, show_scan_results
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -212,30 +216,11 @@ def _fetch_position(ticker: str, min_dte: int, provider: str = "yahoo",
 
 
 # ── Display helpers ──────────────────────────────────────────────────────────
-
-def _wide_spread_mask(bid: pd.Series, ask: pd.Series,
-                      mid: pd.Series) -> list[bool]:
-    ratios = ((ask - bid) / mid.clip(lower=0.01)).tolist()
-    vals   = sorted(ratios)
-    median = vals[len(vals) // 2] if vals else 0.0
-    thresh = max(median * 1.5, 0.15)
-    return [r > thresh for r in ratios]
-
-
-def _low_oi_mask(oi: pd.Series, min_oi: int) -> list[bool]:
-    thresh = max(min_oi * 2, 10)
-    return [v < thresh for v in oi.tolist()]
-
-
-def _low_vol_mask(vol: pd.Series, min_vol: int) -> list[bool]:
-    thresh = max(min_vol * 2, 4)
-    return [v < thresh for v in vol.tolist()]
-
-
-# Chain-table cell styling + tooltip helpers moved to
-# display.chain_styling. Imported below alongside the other display
-# modules. The dead static _IVPP_HELP constant was removed during the
-# move — ivpp_help_for has been the sole tooltip source since PR #9.
+# Row-highlight masks (wide_spread / low_oi / low_vol) live in
+# display.chain_styling alongside the CELL_WARN constant they trigger,
+# the column tooltips, and ivpp_help_for. (The static _IVPP_HELP
+# constant was dropped during that move — ivpp_help_for has been the
+# sole tooltip source since PR #9.)
 
 
 # Scan-provenance stamp helpers + provider identity constants moved to
@@ -356,84 +341,6 @@ def _spot_help_text(meta: dict) -> str:
         when = f"{ts.strftime('%b')} {ts.day}, {time_part} {tz}".rstrip()
     prefix = "trade" if meta.get("source_key") == "schwab" else "fetched"
     return f"{label} · {prefix} {when}"
-
-
-def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
-             min_oi: int = 0, min_vol: int = 0,
-             buy: bool = False, opt_type: str = "option") -> None:
-    if sub.empty:
-        empty_state(
-            "No matches in this chain",
-            "Try widening the delta band, lowering min OI/Volume, or "
-            "extending the DTE range.",
-        )
-        return
-
-    disp = pd.DataFrame({
-        "Strike": sub["strike"].apply(lambda x: f"${x:.0f}"),
-        "Expiration": sub["expiration"].apply(
-            lambda e: datetime.strptime(e, "%Y-%m-%d").strftime("%b %d '%y")
-        ),
-        "DTE":    sub["dte"].astype(int),
-        "Bid":    sub["bid"].round(2),
-        "Ask":    sub["ask"].round(2),
-        "Mid":    sub["mid"].round(2),
-        "IV%":    (sub["iv"] * 100).round(1),
-        "IV+pp":  (sub["iv_excess"] * 100).round(1),
-        "Delta":  sub["delta"].round(2),
-        "Ann%":   sub["ann_yield_pct"].round(1),
-        "OI":     sub["open_interest"],
-        "Vol":    sub["volume"],
-    })
-    if roll_close_cost is not None:
-        disp["NetCr"] = (sub["mid"] - roll_close_cost).round(2)
-
-    wide   = _wide_spread_mask(sub["bid"], sub["ask"], sub["mid"])
-    lo     = _low_oi_mask(sub["open_interest"], min_oi)
-    low_vol = _low_vol_mask(sub["volume"], min_vol)
-
-    styled = (
-        disp.style
-        .apply(lambda _: [CELL_WARN if w else "" for w in wide],
-               subset=["Bid", "Ask"])
-        .apply(lambda _: [CELL_WARN if l else "" for l in lo],
-               subset=["OI"])
-        .apply(lambda _: [CELL_WARN if v else "" for v in low_vol],
-               subset=["Vol"])
-    )
-
-    col_cfg = {
-        "Strike":     st.column_config.TextColumn("Strike", width=75),
-        "Expiration": st.column_config.TextColumn("Expiration", width=105),
-        "DTE":   st.column_config.NumberColumn("DTE", format="%d", width=55),
-        "Bid":   st.column_config.NumberColumn("Bid", format="$%.2f",
-                                               width=70, help=BID_HELP),
-        "Ask":   st.column_config.NumberColumn("Ask", format="$%.2f",
-                                               width=70, help=BID_HELP),
-        "Mid":   st.column_config.NumberColumn("Mid", format="$%.2f",
-                                               width=70),
-        "IV%":   st.column_config.NumberColumn("IV%", format="%.1f%%",
-                                               width=70),
-        "IV+pp": st.column_config.NumberColumn("IV+pp", format="%+.1f pp",
-                                               width=75,
-                                               help=ivpp_help_for(buy, opt_type)),
-        "Delta": st.column_config.NumberColumn("Delta", format="%.2f",
-                                               width=60),
-        "Ann%":  st.column_config.NumberColumn("Ann%", format="%.1f%%",
-                                               width=65),
-        "OI":    st.column_config.NumberColumn("OI", format="%d",
-                                               width=65, help=OI_HELP),
-        "Vol":   st.column_config.NumberColumn("Vol", format="%d",
-                                               width=65, help=VOL_HELP),
-    }
-    if roll_close_cost is not None:
-        col_cfg["NetCr"] = st.column_config.NumberColumn("Net Credit",
-                                                         format="$%+.2f",
-                                                         width=85)
-
-    st.dataframe(styled, column_config=col_cfg, hide_index=True,
-                 width="stretch")
-    stamp_caption()
 
 
 def _show_iv_chart(df: pd.DataFrame, spot: float, mode: str,
@@ -729,9 +636,9 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
         return [bg] * len(row)
 
     # Cell-level overrides for spread, OI, and vol (applied after row bg).
-    wide    = _wide_spread_mask(df_s["bid"], df_s["ask"], df_s["mid"])
-    lo      = _low_oi_mask(df_s["open_interest"], min_oi)
-    low_vol = _low_vol_mask(df_s["volume"], min_vol)
+    wide    = wide_spread_mask(df_s["bid"], df_s["ask"], df_s["mid"])
+    lo      = low_oi_mask(df_s["open_interest"], min_oi)
+    low_vol = low_vol_mask(df_s["volume"], min_vol)
 
     styled = (
         disp.style
@@ -781,27 +688,6 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
     st.dataframe(styled, column_config=col_cfg, hide_index=True,
                  width="stretch")
     stamp_caption()
-
-
-def _show_scan_results(df: pd.DataFrame, mode: str, buy: bool,
-                       roll_close_cost: float | None,
-                       min_oi: int, top_n: int,
-                       min_vol: int = 0) -> None:
-    iv_asc = buy
-    type_labels = {"call": "Calls", "put": "Puts"}
-    to_show = [mode] if mode in type_labels else list(type_labels.keys())
-
-    for opt_type in to_show:
-        sub = (
-            df[df["type"] == opt_type]
-            .sort_values(["iv_excess", "open_interest"], ascending=[iv_asc, False])
-        )
-        sub = sub[(sub["open_interest"] >= min_oi)
-                  & (sub["volume"] >= min_vol)].head(top_n)
-        if len(to_show) > 1:
-            st.subheader(type_labels[opt_type])
-        _show_df(sub, roll_close_cost, min_oi, min_vol,
-                 buy=buy, opt_type=opt_type)
 
 
 # ── Tab: Single Ticker ───────────────────────────────────────────────────────
@@ -1242,7 +1128,7 @@ def _tab_single() -> None:
                           res.get("min_vol", 0), top_ranks=top_ranks)
 
     st.subheader("Top candidates — all chains")
-    _show_scan_results(df_filt, mode_r, buy_r, rcc,
+    show_scan_results(df_filt, mode_r, buy_r, rcc,
                        res["min_oi"], res["top_n"],
                        res.get("min_vol", 0))
 
@@ -1265,7 +1151,7 @@ def _tab_single() -> None:
     else:
         # Apply the EXACT same filters and ranking the "Top candidates"
         # table uses, so the MC dropdown order matches the table order
-        # row-for-row. _show_scan_results does:
+        # row-for-row. show_scan_results does:
         #   1. filter to opt_type (or both)
         #   2. require open_interest >= min_oi AND volume >= min_vol
         #   3. sort by iv_excess (asc if buy / desc if sell), OI tie-break
@@ -2005,7 +1891,7 @@ def _tab_portfolio() -> None:
                            min_vol=int(port_min_vol))
 
             st.markdown("**Top candidates**")
-            _show_scan_results(df_filt, "call", False, roll_close,
+            show_scan_results(df_filt, "call", False, roll_close,
                                int(port_min_oi), int(port_top),
                                int(port_min_vol))
 

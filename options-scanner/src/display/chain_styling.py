@@ -1,18 +1,22 @@
-"""Chain-table cell styling and tooltip text.
+"""Chain-table cell styling, row-highlight masks, and tooltip text.
 
 Shared by the per-expiration chain view (`show_chain_table`) and the
-ranked scan-results table (`show_df`). Two coupled concerns live
+ranked scan-results table (`show_df`). Three coupled concerns live
 here:
 
 1. The yellow warning highlight (`CELL_WARN`) used to flag wide
    spreads, low OI, and low daily volume rows.
-2. The hover-help tooltips for the Bid/Ask, OI, Vol, and IV+pp
+2. Mask helpers (`wide_spread_mask`, `low_oi_mask`, `low_vol_mask`)
+   that decide *which* rows in a chain get the warning highlight.
+3. The hover-help tooltips for the Bid/Ask, OI, Vol, and IV+pp
    column headers. `ivpp_help_for` is a small factory because the
    sign convention flips for buyers vs sellers — surfacing that in
    the tooltip itself saves users from having to remember it.
 """
 
 from __future__ import annotations
+
+import pandas as pd
 
 
 CELL_WARN = "background-color: rgba(234,179,8,0.45)"
@@ -24,6 +28,43 @@ OI_HELP = ("Yellow: OI is below 2× the min OI filter"
            " — limited liquidity, harder to fill at a good price.")
 
 VOL_HELP = "Yellow: fewer than 4 contracts traded today — very thin activity."
+
+
+def wide_spread_mask(bid: pd.Series, ask: pd.Series,
+                     mid: pd.Series) -> list[bool]:
+    """Flag rows whose bid/ask spread is wider than 1.5× the table median.
+
+    Computed per-table so the threshold scales with liquidity — wide is
+    relative to the rest of the rows the user is currently looking at,
+    not an absolute spread floor.
+    """
+    ratios = ((ask - bid) / mid.clip(lower=0.01)).tolist()
+    vals = sorted(ratios)
+    median = vals[len(vals) // 2] if vals else 0.0
+    thresh = max(median * 1.5, 0.15)
+    return [r > thresh for r in ratios]
+
+
+def low_oi_mask(oi: pd.Series, min_oi: int) -> list[bool]:
+    """Flag rows whose open interest is below 2× the min OI filter.
+
+    A row already passed the min OI filter to land in the table — this
+    flags ones that are *barely* above the floor, signaling thinner
+    liquidity than the rest of the displayed set.
+    """
+    thresh = max(min_oi * 2, 10)
+    return [v < thresh for v in oi.tolist()]
+
+
+def low_vol_mask(vol: pd.Series, min_vol: int) -> list[bool]:
+    """Flag rows with sub-4-contract daily volume (or below 2× min_vol).
+
+    Today's volume is the freshest liquidity signal; OI is cumulative
+    and includes stale interest. A row with high OI but near-zero
+    today-volume is often a strike no one trades anymore.
+    """
+    thresh = max(min_vol * 2, 4)
+    return [v < thresh for v in vol.tolist()]
 
 
 def ivpp_help_for(buy: bool, opt_type: str = "option") -> str:
