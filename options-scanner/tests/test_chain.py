@@ -20,7 +20,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-import chain
+import options_scanner.chain as chain
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

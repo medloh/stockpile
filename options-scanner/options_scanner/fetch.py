@@ -30,9 +30,9 @@ import streamlit as st
 def fetch_and_enrich(ticker: str, opt_type: str, min_dte: int,
                      max_dte: int | None, provider: str = "yahoo",
                      schwab_config: dict | None = None):
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
+    from options_scanner.chain import fetch_chain
+    from options_scanner.iv_surface import compute_iv_excess
+    from options_scanner.earnings import fetch_earnings_dates, annotate_earnings
     try:
         df = fetch_chain(ticker, opt_type=opt_type, min_dte=min_dte,
                          max_dte=max_dte, provider=provider,
@@ -51,9 +51,9 @@ def fetch_and_enrich(ticker: str, opt_type: str, min_dte: int,
 def fetch_position(ticker: str, min_dte: int, provider: str = "yahoo",
                    schwab_config: dict | None = None):
     """Cached per-ticker chain fetch for portfolio tab."""
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
+    from options_scanner.chain import fetch_chain
+    from options_scanner.iv_surface import compute_iv_excess
+    from options_scanner.earnings import fetch_earnings_dates, annotate_earnings
     try:
         df = fetch_chain(ticker, opt_type="calls", min_dte=min_dte,
                          provider=provider, schwab_config=schwab_config)

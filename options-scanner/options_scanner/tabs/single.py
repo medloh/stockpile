@@ -21,20 +21,20 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from compute.top_ranks import compute_top_ranks
-from display.chain_table import show_chain_table
-from display.gex_chart import show_gex_chart
-from display.iv_chart import show_iv_chart
-from display.outlook_card import render_outlook_card
-from display.scan_results import show_scan_results
-from display.spot_meta import (
+from options_scanner.compute.top_ranks import compute_top_ranks
+from options_scanner.display.chain_table import show_chain_table
+from options_scanner.display.gex_chart import show_gex_chart
+from options_scanner.display.iv_chart import show_iv_chart
+from options_scanner.display.outlook_card import render_outlook_card
+from options_scanner.display.scan_results import show_scan_results
+from options_scanner.display.spot_meta import (
     fetch_spot_meta,
     spot_help_text,
     spot_value_html,
 )
-from fetch import fetch_and_enrich
-from mc_ui import position_from_chain_row, render_mc_panel
-from ui_theme import badge, empty_state, metric_card, section_header
+from options_scanner.fetch import fetch_and_enrich
+from options_scanner.mc_ui import position_from_chain_row, render_mc_panel
+from options_scanner.ui_theme import badge, empty_state, metric_card, section_header
 
 
 def tab_single() -> None:
@@ -495,7 +495,7 @@ def tab_single() -> None:
                           f"exp {pd.to_datetime(picked['expiration']).strftime('%b %d %y')}",
                 )
 
-    from report import render_html
+    from options_scanner.report import render_html
     html = render_html(df_filt, ticker_r, spot, ed, mode_r, buy_r, rcc,
                        res["min_oi"], res.get("min_vol", 0))
     action_tag = "buy" if buy_r else "sell"

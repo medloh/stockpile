@@ -17,7 +17,7 @@ import math
 
 import pytest
 
-from chain import _bs_delta, _bs_gamma, _norm_cdf, _norm_pdf
+from options_scanner.chain import _bs_delta, _bs_gamma, _norm_cdf, _norm_pdf
 
 
 # ── Standard normal helpers ──────────────────────────────────────────────────

@@ -22,9 +22,9 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from ui_theme import empty_state
+from options_scanner.ui_theme import empty_state
 
-from display.chain_styling import (
+from options_scanner.display.chain_styling import (
     BID_HELP,
     CELL_WARN,
     OI_HELP,
@@ -34,7 +34,7 @@ from display.chain_styling import (
     low_vol_mask,
     wide_spread_mask,
 )
-from display.scan_stamp import stamp_caption
+from options_scanner.display.scan_stamp import stamp_caption
 
 
 def show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,

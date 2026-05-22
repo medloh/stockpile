@@ -5,8 +5,8 @@ import math
 import pandas as pd
 import pytest
 
-from chain import _bs_delta, _bs_gamma
-from spreads import (
+from options_scanner.chain import _bs_delta, _bs_gamma
+from options_scanner.spreads import (
     DIRECTIONAL_STRATEGIES,
     NEUTRAL_STRATEGIES,
     RISK_FREE_RATE,
@@ -325,7 +325,7 @@ def test_scan_spreads_dollar_width_fails_on_spx(spx_like_chain):
 
 def test_scan_spreads_error_collection(synthetic_chain, monkeypatch):
     """Inject a builder that raises; ensure scan_spreads collects the error."""
-    import spreads as sp
+    import options_scanner.spreads as sp
 
     def broken_builder(*a, **kw):
         raise RuntimeError("intentional test failure")

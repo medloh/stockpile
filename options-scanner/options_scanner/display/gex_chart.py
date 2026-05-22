@@ -16,7 +16,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from display.scan_stamp import scan_stamp_color, scan_stamp_text
+from options_scanner.display.scan_stamp import scan_stamp_color, scan_stamp_text
 
 
 def show_gex_chart(df: pd.DataFrame, spot: float,

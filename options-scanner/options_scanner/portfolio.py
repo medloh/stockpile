@@ -90,9 +90,9 @@ def scan_position(pos: dict, min_dte: int = 365, min_oi: int = 25,
     Returns dict: {position, error, df, spot, earnings_dates, roll_close_costs}
     roll_close_costs: {option_symbol: mid_price}
     """
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
+    from options_scanner.chain import fetch_chain
+    from options_scanner.iv_surface import compute_iv_excess
+    from options_scanner.earnings import fetch_earnings_dates, annotate_earnings
 
     ticker = pos["ticker"]
     empty = {"position": pos, "error": None, "df": pd.DataFrame(),
@@ -188,7 +188,7 @@ def main() -> None:
     )
     args = parser.parse_args()
 
-    from config import load_config, get_provider, get_schwab_config
+    from options_scanner.config import load_config, get_provider, get_schwab_config
     cfg = load_config()
     provider = args.data_source or get_provider(cfg)
     schwab_config = get_schwab_config(cfg)
@@ -209,7 +209,7 @@ def main() -> None:
         print("  Data source: Schwab (real-time)")
     print()
 
-    from display import print_results
+    from options_scanner.display.cli import print_results
 
     results = []
     for i, pos in enumerate(positions):
@@ -247,7 +247,7 @@ def main() -> None:
         )
 
     if args.html:
-        from report import save_portfolio_html
+        from options_scanner.report import save_portfolio_html
         output_dir = (Path(args.output_dir) if args.output_dir
                       else Path(__file__).parents[1] / "output")
         filename = f"portfolio_{date.today().strftime('%Y%m%d')}.html"

@@ -14,7 +14,7 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from display.scan_stamp import scan_stamp_color, scan_stamp_text
+from options_scanner.display.scan_stamp import scan_stamp_color, scan_stamp_text
 
 
 def show_payoff_chart(row: pd.Series, spot: float) -> None:
@@ -29,7 +29,7 @@ def show_payoff_chart(row: pd.Series, spot: float) -> None:
     # spreads.* live below run_app.py's sys.path entry — inline import
     # keeps the cold-start cheap and avoids a top-level cycle while
     # display/ is being assembled.
-    from spreads import spread_payoff_data, build_legs_from_row
+    from options_scanner.spreads import spread_payoff_data, build_legs_from_row
 
     legs = build_legs_from_row(row)
     if not legs:

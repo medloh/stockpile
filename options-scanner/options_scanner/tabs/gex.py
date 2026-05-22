@@ -20,19 +20,19 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from compute.gex_summary import compute_gex_summary
-from display.gex_chart import show_gex_chart
-from display.gex_strikes_table import (
+from options_scanner.compute.gex_summary import compute_gex_summary
+from options_scanner.display.gex_chart import show_gex_chart
+from options_scanner.display.gex_strikes_table import (
     fmt_strike_with_dist,
     show_gex_strikes_of_interest,
 )
-from display.spot_meta import (
+from options_scanner.display.spot_meta import (
     fetch_spot_meta,
     spot_help_text,
     spot_value_html,
 )
-from fetch import fetch_and_enrich
-from ui_theme import metric_card
+from options_scanner.fetch import fetch_and_enrich
+from options_scanner.ui_theme import metric_card
 
 
 def tab_gex() -> None:

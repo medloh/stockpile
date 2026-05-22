@@ -10,11 +10,9 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
 import streamlit as st
 
-from ui_theme import (
+from options_scanner.ui_theme import (
     badge,
     disclaimer_chip,
     footer as ui_footer,
@@ -23,11 +21,11 @@ from ui_theme import (
     register_altair_theme,
     section_header,
 )
-from display.scan_stamp import PROVIDER_LABELS, PROVIDER_COLORS
-from tabs.gex import tab_gex
-from tabs.portfolio import tab_portfolio
-from tabs.single import tab_single
-from tabs.spreads import tab_directional, tab_neutral, tab_spreads
+from options_scanner.display.scan_stamp import PROVIDER_LABELS, PROVIDER_COLORS
+from options_scanner.tabs.gex import tab_gex
+from options_scanner.tabs.portfolio import tab_portfolio
+from options_scanner.tabs.single import tab_single
+from options_scanner.tabs.spreads import tab_directional, tab_neutral, tab_spreads
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -139,7 +137,7 @@ st.html(
 
 # Load config and seed data_source_choice into session_state BEFORE the
 # dynamic CSS block below reads it.
-from config import load_config, get_provider, get_schwab_config as _get_schwab_cfg
+from options_scanner.config import load_config, get_provider, get_schwab_config as _get_schwab_cfg
 _app_cfg = load_config()
 _cfg_provider = get_provider(_app_cfg)
 _cfg_schwab = _get_schwab_cfg(_app_cfg)

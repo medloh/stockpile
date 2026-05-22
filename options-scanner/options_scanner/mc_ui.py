@@ -29,14 +29,14 @@ import numpy as np
 import pandas as pd
 import streamlit as st
 
-from montecarlo import (
+from options_scanner.montecarlo import (
     Leg,
     Position,
     SimulationConfig,
     SimulationResult,
     run_simulation,
 )
-from ui_theme import PALETTE, metric_card
+from options_scanner.ui_theme import PALETTE, metric_card
 
 
 # ── Position builders ──────────────────────────────────────────────────────

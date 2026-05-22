@@ -479,7 +479,7 @@ if you want to explore plugging one in yourself:
 [SCHWAB_DATA_SOURCE.md](SCHWAB_DATA_SOURCE.md) to enable it.
 **Tradier** is the easiest next step for a second alternative — the
 free developer sandbox lets you test without an active account, and
-the REST/JSON responses map cleanly onto how `src/chain.py` fetches
+the REST/JSON responses map cleanly onto how `options_scanner/chain.py` fetches
 data.
 
 ## Roadmap
@@ -545,7 +545,7 @@ Planned improvements, roughly in priority order:
 - **Third-party Schwab / Yahoo client libraries** — evaluate whether
   community-maintained CLIs / Python clients (e.g. `schwab-py`,
   `schwabdev`, `yfinance`) are worth adopting in place of the
-  hand-rolled HTTP calls and OAuth flow currently in `src/chain.py`
+  hand-rolled HTTP calls and OAuth flow currently in `options_scanner/chain.py`
   and `schwab_auth.py`. Tradeoffs: less code to maintain and easier
   access to endpoints we haven't wired yet (streaming quotes,
   account history) vs. taking on an external dependency that could

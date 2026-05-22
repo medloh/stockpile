@@ -18,11 +18,9 @@ Usage:
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent / "src"))
-
 
 def main() -> None:
-    from config import load_config, get_schwab_config, get_provider
+    from options_scanner.config import load_config, get_schwab_config, get_provider
 
     cfg = load_config()
     config_path = Path(__file__).parent / "config.toml"

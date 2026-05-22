@@ -20,8 +20,8 @@ import altair as alt
 import pandas as pd
 import streamlit as st
 
-from compute.top_ranks import compute_top_ranks
-from display.scan_stamp import scan_stamp_color, scan_stamp_text
+from options_scanner.compute.top_ranks import compute_top_ranks
+from options_scanner.display.scan_stamp import scan_stamp_color, scan_stamp_text
 
 
 def show_iv_chart(df: pd.DataFrame, spot: float, mode: str,

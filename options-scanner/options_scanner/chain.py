@@ -159,7 +159,7 @@ def fetch_chain(ticker: str, opt_type: str = "both",
     schwab_config: dict with app_key, app_secret, callback_url, token_file
     """
     if provider == "schwab":
-        from schwab_chain import fetch_chain_schwab
+        from options_scanner.schwab_chain import fetch_chain_schwab
         return fetch_chain_schwab(ticker, opt_type, min_dte, max_dte,
                                   schwab_config)
     return _fetch_chain_yahoo(ticker, opt_type, min_dte, max_dte)

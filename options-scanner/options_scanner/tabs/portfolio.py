@@ -18,16 +18,16 @@ from datetime import date, datetime
 
 import streamlit as st
 
-from display.iv_chart import show_iv_chart
-from display.portfolio_action_card import render_portfolio_action_card
-from display.scan_results import show_scan_results
-from display.spot_meta import (
+from options_scanner.display.iv_chart import show_iv_chart
+from options_scanner.display.portfolio_action_card import render_portfolio_action_card
+from options_scanner.display.scan_results import show_scan_results
+from options_scanner.display.spot_meta import (
     fetch_spot_meta,
     spot_help_text,
     spot_value_html,
 )
-from fetch import fetch_position
-from ui_theme import badge, metric_card, section_header
+from options_scanner.fetch import fetch_position
+from options_scanner.ui_theme import badge, metric_card, section_header
 
 
 @st.cache_data(show_spinner=False)
@@ -49,7 +49,7 @@ def _validate_csv(content: bytes, brokerage: str) -> tuple[list, int, str | None
         tmp.write(content)
         tmp_path = tmp.name
     try:
-        from portfolio import get_portfolio
+        from options_scanner.portfolio import get_portfolio
         positions = get_portfolio(tmp_path, brokerage)
         return [], len(positions), None
     except Exception as exc:
@@ -194,7 +194,7 @@ def tab_portfolio() -> None:
     if st.button("Scan Portfolio", type="primary",
                  disabled=(uploaded is None or brokerage is None
                            or not scan_ready)):
-        from portfolio import get_portfolio
+        from options_scanner.portfolio import get_portfolio
         _provider = st.session_state.get("data_source", "yahoo")
         _scfg = st.session_state.get("schwab_config")
 
@@ -372,7 +372,7 @@ def tab_portfolio() -> None:
                                int(port_min_vol))
 
     # Portfolio HTML download
-    from report import render_portfolio_html
+    from options_scanner.report import render_portfolio_html
     port_html = render_portfolio_html(
         results, uploaded_name, int(port_min_oi), int(port_top),
         int(port_min_vol),

@@ -822,7 +822,7 @@ wheels = [
 [[package]]
 name = "options-scanner"
 version = "0.1.0"
-source = { virtual = "options-scanner" }
+source = { editable = "options-scanner" }
 dependencies = [
     { name = "lxml" },
     { name = "numpy" },

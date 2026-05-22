@@ -22,7 +22,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from display.outlook_card import OUTLOOK_TONE_HEX
+from options_scanner.display.outlook_card import OUTLOOK_TONE_HEX
 
 
 def render_portfolio_action_card(

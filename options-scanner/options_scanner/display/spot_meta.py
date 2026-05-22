@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-from display.scan_stamp import PROVIDER_LABELS, tz_abbr
+from options_scanner.display.scan_stamp import PROVIDER_LABELS, tz_abbr
 
 
 @st.cache_data(ttl=60, show_spinner=False)

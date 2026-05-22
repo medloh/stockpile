@@ -7,10 +7,10 @@ list, default filter values, and (for Neutral) the Max |Δ| slider.
 The shared view also drives the Monte Carlo panel for any selected
 spread row.
 
-Module-level absolute import note: `from spreads import scan_spreads`
-resolves to the top-level `src/spreads.py` math module via sys.path,
-not to this package's `tabs/spreads.py` — Python treats it as an
-absolute import.
+Note on naming: this module shares its short name with the top-level
+`options_scanner.spreads` math module (where `scan_spreads` lives).
+Imports always go through the fully-qualified `options_scanner.X`
+path, so there's no ambiguity.
 """
 
 from __future__ import annotations
@@ -20,16 +20,16 @@ from datetime import date, datetime
 import pandas as pd
 import streamlit as st
 
-from display.payoff_chart import show_payoff_chart
-from display.scan_stamp import stamp_caption
-from display.spot_meta import (
+from options_scanner.display.payoff_chart import show_payoff_chart
+from options_scanner.display.scan_stamp import stamp_caption
+from options_scanner.display.spot_meta import (
     fetch_spot_meta,
     spot_help_text,
     spot_value_html,
 )
-from fetch import fetch_and_enrich
-from mc_ui import LegSpec, position_from_legs, render_mc_panel
-from ui_theme import metric_card, section_header
+from options_scanner.fetch import fetch_and_enrich
+from options_scanner.mc_ui import LegSpec, position_from_legs, render_mc_panel
+from options_scanner.ui_theme import metric_card, section_header
 
 
 _GREEK_HELP = {
@@ -181,7 +181,7 @@ def _render_view(
     default_max_abs_delta: float = 1.0,
 ) -> None:
     """Shared controls + scan + results rendering for all spread tabs."""
-    from spreads import scan_spreads
+    from options_scanner.spreads import scan_spreads
 
     # ── Controls ──────────────────────────────────────────────────────────────
     with st.container(border=True):
@@ -429,7 +429,7 @@ def _render_view(
                 show_payoff_chart(row, spot)
 
                 # ── Monte Carlo for the selected multi-leg strategy ─────────
-                from spreads import build_legs_from_row
+                from options_scanner.spreads import build_legs_from_row
                 raw_legs = build_legs_from_row(row)
                 if raw_legs:
                     try:
@@ -495,7 +495,7 @@ def _render_view(
 
 def tab_spreads() -> None:
     """Power-user view — all 13 spread strategies available."""
-    from spreads import STRATEGY_NAMES
+    from options_scanner.spreads import STRATEGY_NAMES
     _render_view(
         key_prefix="sp",
         tab_label="Spreads",
@@ -510,7 +510,7 @@ def tab_spreads() -> None:
 
 def tab_directional() -> None:
     """Bullish / bearish strategies only."""
-    from spreads import DIRECTIONAL_STRATEGIES
+    from options_scanner.spreads import DIRECTIONAL_STRATEGIES
     _render_view(
         key_prefix="dir",
         tab_label="Directional",
@@ -525,7 +525,7 @@ def tab_directional() -> None:
 
 def tab_neutral() -> None:
     """Range-bound / delta-neutral strategies with a Max |Δ| slider."""
-    from spreads import NEUTRAL_STRATEGIES
+    from options_scanner.spreads import NEUTRAL_STRATEGIES
     _render_view(
         key_prefix="nu",
         tab_label="Neutral",

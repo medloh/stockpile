@@ -20,7 +20,7 @@ import pandas as pd
 import pytest
 import stocks_shared.schwab_live as schwab_live
 
-import schwab_chain
+import options_scanner.schwab_chain as schwab_chain
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────

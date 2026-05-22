@@ -6,7 +6,7 @@ from datetime import date, datetime
 import numpy as np
 import pandas as pd
 
-from chain import _norm_cdf, _norm_pdf
+from options_scanner.chain import _norm_cdf, _norm_pdf
 
 RISK_FREE_RATE = 0.045
 

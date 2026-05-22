@@ -131,7 +131,7 @@ def main() -> None:
         parser.error("--max-dte must be >= --min-dte")
 
     # Load config and resolve provider
-    from config import load_config, get_provider, get_schwab_config
+    from options_scanner.config import load_config, get_provider, get_schwab_config
     cfg = load_config()
     provider = args.data_source or get_provider(cfg)
     schwab_config = get_schwab_config(cfg)
@@ -147,10 +147,10 @@ def main() -> None:
         opt_type_fetch = "both"
         mode = "both"
 
-    from chain import fetch_chain
-    from iv_surface import compute_iv_excess
-    from earnings import fetch_earnings_dates, annotate_earnings
-    from display import print_results
+    from options_scanner.chain import fetch_chain
+    from options_scanner.iv_surface import compute_iv_excess
+    from options_scanner.earnings import fetch_earnings_dates, annotate_earnings
+    from options_scanner.display.cli import print_results
 
     log.info(
         "Fetching %s chain for %s (DTE %s) via %s...",
@@ -251,7 +251,7 @@ def main() -> None:
     )
 
     if args.html:
-        from report import save_html
+        from options_scanner.report import save_html
         action_tag = "buy" if args.buy else "sell"
         type_tag = mode if mode != "both" else "both"
         filename = f"{ticker}_{type_tag}_{action_tag}_{date.today().strftime('%Y%m%d')}.html"

@@ -15,10 +15,10 @@ import math
 import numpy as np
 import pytest
 
-from montecarlo.engine import SimulationConfig, run_simulation
-from montecarlo.metrics import summarize
-from montecarlo.model import generate_paths, TRADING_DAYS_PER_YEAR
-from montecarlo.position import Leg, Position, evaluate_payoff
+from options_scanner.montecarlo.engine import SimulationConfig, run_simulation
+from options_scanner.montecarlo.metrics import summarize
+from options_scanner.montecarlo.model import generate_paths, TRADING_DAYS_PER_YEAR
+from options_scanner.montecarlo.position import Leg, Position, evaluate_payoff
 
 
 # ── GBM moments ────────────────────────────────────────────────────────────

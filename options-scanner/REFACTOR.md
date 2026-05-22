@@ -29,7 +29,7 @@ on the `st.tabs(...)` registration are a downstream symptom.
 
 ```
 options-scanner/
-  src/
+  options_scanner/
     tabs/
       __init__.py
       single.py        # _tab_single + tab-local helpers
@@ -58,11 +58,11 @@ Highest leverage by far — every other refactor gets easier afterward.
 ## 2. Extract inline CSS to a real file
 
 Currently a triple-quoted blob inside `run_app.py`. Move to
-`options-scanner/src/styles.css`, load via:
+`options-scanner/options_scanner/styles.css`, load via:
 
 ```python
 from pathlib import Path
-_CSS = (Path(__file__).parent / "src" / "styles.css").read_text()
+_CSS = (Path(__file__).parent / "options_scanner" / "styles.css").read_text()
 st.markdown(f"<style>{_CSS}</style>", unsafe_allow_html=True)
 ```
 
@@ -88,20 +88,15 @@ The Schwab path also gets its Greeks from the broker (no BS math
 needed), so the two flows aren't identical — the shared piece is the
 row assembly + filters, not the Greeks computation.
 
-## 4. Convert `src/` to a proper Python package
+## 4. Convert `src/` to a proper Python package ✅ DONE 2026-05-22
 
-Currently `options-scanner/src/` has no `__init__.py`; the
-`tests/conftest.py` does `sys.path.insert(0, src)` to make imports
-work. Functional, but:
-
-- IDE auto-imports don't always find these modules
-- Type-checkers (mypy, pyright) get confused
-- `python -m` invocation breaks
-
-Fix: add `__init__.py` files, register the package in
-`options-scanner/pyproject.toml`, drop the `sys.path` shim. ~30-minute
-change, pays for itself forever. Best done *after* the `tabs/` split
-above so the package structure lands together.
+`src/` is now `options_scanner/` — a real Python package registered
+in `pyproject.toml` via hatchling. The `sys.path.insert` shims in
+`run_app.py`, `run_scanner.py`, `run_portfolio.py`, `schwab_auth.py`
+and `tests/conftest.py` are gone; all imports use absolute
+`options_scanner.X` paths. Along the way: dropped the latent
+`display.py` / `display/` package collision by folding the CLI
+results-printer into `display/cli.py`.
 
 ## 5. Magic numbers in CSS layout → named constants
 

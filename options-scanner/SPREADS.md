@@ -10,7 +10,7 @@ The options scanner has three spread-focused tabs alongside the single-leg
 | **Neutral** | Range-bound / delta-neutral + \|Δ\| slider | Iron Condor, Calendar, Long Strangle |
 
 All three tabs share the same underlying engine (`scan_spreads` in
-`options-scanner/src/spreads.py`). They differ only in which strategies
+`options-scanner/options_scanner/spreads.py`). They differ only in which strategies
 are exposed, the default filter values, and whether the delta-neutral
 slider is shown.
 

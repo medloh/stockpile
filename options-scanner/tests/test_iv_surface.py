@@ -19,7 +19,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from iv_surface import compute_iv_excess
+from options_scanner.iv_surface import compute_iv_excess
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
