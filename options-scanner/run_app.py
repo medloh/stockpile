@@ -34,6 +34,14 @@ from ui_theme import (
 from mc_ui import LegSpec, position_from_chain_row, position_from_legs, render_mc_panel
 from compute.top_ranks import compute_top_ranks
 from compute.gex_summary import compute_gex_summary
+from display.scan_stamp import (
+    PROVIDER_LABELS,
+    PROVIDER_COLORS,
+    tz_abbr,
+    scan_stamp_text,
+    scan_stamp_color,
+    stamp_caption,
+)
 
 _FAVICON_PATH = Path(__file__).parent / "assets" / "favicon.png"
 st.set_page_config(
@@ -253,61 +261,9 @@ def _ivpp_help_for(buy: bool, opt_type: str = "option") -> str:
 _VOL_HELP  = "Yellow: fewer than 4 contracts traded today — very thin activity."
 
 
-# ── Scan provenance stamp ────────────────────────────────────────────────────
-# Data source + scan timestamp shown on every chart and below every table so
-# the context survives screenshots, HTML exports, and Reddit reposts.
-
-_PROVIDER_LABELS = {"yahoo": "Yahoo Finance", "schwab": "Schwab"}
-_PROVIDER_COLORS = {"yahoo": "#16a34a", "schwab": "#2563eb"}  # green / blue
-
-
-def _tz_abbr(ts) -> str:
-    """3–4 char timezone abbreviation that works across platforms.
-
-    Python's strftime('%Z') gives the full name on Windows ('Eastern
-    Daylight Time') but the short form on POSIX ('EDT'). Normalize by
-    taking the uppercase initials when the name is long.
-    """
-    name = ts.tzname() or ""
-    if not name:
-        return ""
-    if len(name) <= 4:
-        return name
-    return "".join(w[0] for w in name.split() if w[:1].isupper())[:4]
-
-
-def _scan_stamp_text() -> str:
-    """Format like 'Schwab · 2026-05-16 14:32 EDT'. Empty if no scan yet.
-
-    Reads `scan_provider` (snapshotted at scan time) — NOT the live data
-    source dropdown — so the stamp reflects what was actually used to
-    fetch the displayed data, even after the user changes the dropdown.
-    """
-    ts = st.session_state.get("scan_ts")
-    if not ts:
-        return ""
-    provider = st.session_state.get("scan_provider", "yahoo")
-    label = _PROVIDER_LABELS.get(provider, provider)
-    return f"{label} · {ts.strftime('%Y-%m-%d %H:%M')} {_tz_abbr(ts)}".rstrip()
-
-
-def _scan_stamp_color() -> str:
-    """Hex color for the stamp text, based on the provider at scan time."""
-    provider = st.session_state.get("scan_provider", "yahoo")
-    return _PROVIDER_COLORS.get(provider, "#94a3b8")
-
-
-def _stamp_caption() -> None:
-    """Render the scan stamp as a colored caption below a table."""
-    text = _scan_stamp_text()
-    if not text:
-        return
-    color = _scan_stamp_color()
-    st.markdown(
-        f'<div style="color:{color}; font-size:0.85rem; '
-        f'margin-top:-4px;">{text}</div>',
-        unsafe_allow_html=True,
-    )
+# Scan-provenance stamp helpers + provider identity constants moved to
+# display.scan_stamp. Imported below alongside the other compute/display
+# layer imports.
 
 
 # ── Spot metadata (day change + last-trade timestamp) ───────────────────────
@@ -332,7 +288,7 @@ def _fetch_spot_meta(ticker: str, data_source: str) -> dict:
     result = {
         "pct_change":    None,
         "last_trade_ts": None,
-        "source_label":  _PROVIDER_LABELS.get(data_source, data_source),
+        "source_label":  PROVIDER_LABELS.get(data_source, data_source),
         "source_key":    data_source,
     }
     try:
@@ -416,7 +372,7 @@ def _spot_help_text(meta: dict) -> str:
     now_date = st.session_state.get("scan_ts")
     now_date = now_date.astimezone().date() if now_date else today
     time_part = ts.strftime("%I:%M %p").lstrip("0")
-    tz = _tz_abbr(ts)
+    tz = tz_abbr(ts)
     if ts.date() == now_date:
         when = f"{time_part} {tz}".rstrip()
     else:
@@ -500,7 +456,7 @@ def _show_df(sub: pd.DataFrame, roll_close_cost: float | None = None,
 
     st.dataframe(styled, column_config=col_cfg, hide_index=True,
                  width="stretch")
-    _stamp_caption()
+    stamp_caption()
 
 
 def _show_iv_chart(df: pd.DataFrame, spot: float, mode: str,
@@ -701,8 +657,8 @@ def _show_iv_chart(df: pd.DataFrame, spot: float, mode: str,
         height=380,
         title=alt.TitleParams(
             text=title_text,
-            subtitle=_scan_stamp_text() or None,
-            subtitleColor=_scan_stamp_color(),
+            subtitle=scan_stamp_text() or None,
+            subtitleColor=scan_stamp_color(),
             subtitleFontSize=11,
             fontSize=16, fontWeight="bold", anchor="start",
             color="#0f172a",
@@ -847,7 +803,7 @@ def _show_chain_table(df_exp: pd.DataFrame, buy: bool, mode: str,
                                                          width=85)
     st.dataframe(styled, column_config=col_cfg, hide_index=True,
                  width="stretch")
-    _stamp_caption()
+    stamp_caption()
 
 
 def _show_gex_chart(df: pd.DataFrame, spot: float,
@@ -985,8 +941,8 @@ def _show_gex_chart(df: pd.DataFrame, spot: float,
             height=240,
             title=alt.TitleParams(
                 text=title_text,
-                subtitle=_scan_stamp_text() or None,
-                subtitleColor=_scan_stamp_color(),
+                subtitle=scan_stamp_text() or None,
+                subtitleColor=scan_stamp_color(),
                 subtitleFontSize=11,
                 fontSize=14, fontWeight="bold", anchor="start",
                 color="#0f172a",
@@ -2390,8 +2346,8 @@ def _show_payoff_chart(row: pd.Series, spot: float) -> None:
         height=300,
         title=alt.TitleParams(
             text=title,
-            subtitle=_scan_stamp_text() or None,
-            subtitleColor=_scan_stamp_color(),
+            subtitle=scan_stamp_text() or None,
+            subtitleColor=scan_stamp_color(),
             subtitleFontSize=11,
             fontSize=14, fontWeight="bold",
             anchor="start", color="#0f172a",
@@ -2532,7 +2488,7 @@ def _show_spreads_table(sub: pd.DataFrame, strategy_name: str,
         selection_mode="single-row",
         key=f"{key_prefix}_tbl_{strategy_name.replace(' ', '_').replace('/', '_').replace('×', 'x')}",
     )
-    _stamp_caption()
+    stamp_caption()
     selected_rows = event.selection.rows if hasattr(event, "selection") else []
     return selected_rows[0] if selected_rows else None
 
@@ -3165,9 +3121,9 @@ st.session_state["schwab_config"] = _cfg_schwab if data_source == "schwab" else 
 # vertical space on the main canvas. Disclaimer + source badge remain
 # inline at the top, right-aligned, since they're small and useful at-a-
 # glance context.
-_src_chip_color = _PROVIDER_COLORS.get(data_source, "#94a3b8")
+_src_chip_color = PROVIDER_COLORS.get(data_source, "#94a3b8")
 _src_chip_label = (
-    f"Source: {_PROVIDER_LABELS.get(data_source, data_source).upper()}"
+    f"Source: {PROVIDER_LABELS.get(data_source, data_source).upper()}"
 )
 st.markdown(
     "<div style='display:flex; justify-content:flex-end; "
@@ -3205,7 +3161,7 @@ with st.sidebar:
     st.markdown("---")
     section_header("Data source", eyebrow="ACTIVE PROVIDER")
     _src_label = _source_label(data_source)
-    _src_color = _PROVIDER_COLORS.get(data_source, "#94a3b8")
+    _src_color = PROVIDER_COLORS.get(data_source, "#94a3b8")
     st.markdown(
         f"<div style='font-size:0.86rem; margin-bottom:0.4rem;'>"
         f"<span style='display:inline-block; padding:0.2rem 0.65rem; "
