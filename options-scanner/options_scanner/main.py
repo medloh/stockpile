@@ -69,6 +69,69 @@ def _to_candidate(row, roll_close_cost: float | None) -> dict:
     return c
 
 
+def _candidates_for(df, mode, iv_asc, min_oi, min_vol, top,
+                    roll_close_cost, ivpp_threshold=None):
+    """Filter, rank, and serialize candidates from an already-fetched chain.
+
+    iv_asc=True ranks IV-cheap-first (buy); False ranks IV-rich-first (sell).
+    ivpp_threshold (if given) keeps only options at least that many pp on the
+    correct side of the surface (>= thr for sell, <= -thr for buy).
+    """
+    df_filt = df[
+        (df["open_interest"] >= min_oi) & (df["volume"] >= min_vol)
+    ].copy()
+    if ivpp_threshold is not None:
+        if iv_asc:
+            df_filt = df_filt[df_filt["iv_excess"] * 100 <= -ivpp_threshold]
+        else:
+            df_filt = df_filt[df_filt["iv_excess"] * 100 >= ivpp_threshold]
+    sort_col = "signal_score" if "signal_score" in df_filt.columns else "iv_excess"
+    types_to_show = ["call", "put"] if mode == "both" else [mode]
+    candidates = []
+    for opt_type in types_to_show:
+        sub = (
+            df_filt[df_filt["type"] == opt_type]
+            .sort_values([sort_col, "open_interest"], ascending=[iv_asc, False])
+            .head(top)
+        )
+        for _, row in sub.iterrows():
+            candidates.append(_to_candidate(row, roll_close_cost))
+    return candidates
+
+
+def _candidates_with_fallback(df, mode, iv_asc, args, roll_close_cost,
+                              ivpp_threshold=None):
+    """Build candidates; if empty and a volume floor is set, retry at vol=0.
+
+    When the market is closed the day's volume is 0 across the whole chain, so
+    the default --min-vol wipes every row and the scan returns nothing useful.
+    Relaxing volume (but NOT open interest, which is cumulative and survives a
+    closed session) recovers the ranking. Returns (candidates, relaxed) where
+    relaxed is True only when the retry is what produced the candidates.
+    """
+    cands = _candidates_for(
+        df, mode, iv_asc, args.min_oi, args.min_vol, args.top,
+        roll_close_cost, ivpp_threshold,
+    )
+    relaxed = False
+    if not cands and args.min_vol > 0:
+        cands = _candidates_for(
+            df, mode, iv_asc, args.min_oi, 0, args.top,
+            roll_close_cost, ivpp_threshold,
+        )
+        relaxed = bool(cands)
+    return cands, relaxed
+
+
+def _result_envelope(ticker: str, spot: float, provider: str) -> dict:
+    return {
+        "ticker": ticker,
+        "spot": round(spot, 2),
+        "data_source": provider,
+        "scan_time": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+
+
 def _build_json_result(
     ticker: str,
     spot: float,
@@ -78,37 +141,53 @@ def _build_json_result(
     args,
     roll_close_cost: float | None,
 ) -> dict:
-    iv_asc = args.buy
-    sort_col = "signal_score" if "signal_score" in df.columns else "iv_excess"
-    types_to_show = ["call", "put"] if mode == "both" else [mode]
-    df_filt = df[
-        (df["open_interest"] >= args.min_oi) & (df["volume"] >= args.min_vol)
-    ].copy()
-    candidates = []
-    for opt_type in types_to_show:
-        sub = (
-            df_filt[df_filt["type"] == opt_type]
-            .sort_values([sort_col, "open_interest"], ascending=[iv_asc, False])
-            .head(args.top)
-        )
-        for _, row in sub.iterrows():
-            candidates.append(_to_candidate(row, roll_close_cost))
-    return {
-        "ticker": ticker,
-        "spot": round(spot, 2),
-        "data_source": provider,
-        "scan_time": datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-        "mode": "buy" if args.buy else "sell",
-        "candidates": candidates,
-    }
+    # ivpp already applied in _scan_one for single-mode; don't double-filter.
+    candidates, relaxed = _candidates_with_fallback(
+        df, mode, args.buy, args, roll_close_cost, ivpp_threshold=None,
+    )
+    result = _result_envelope(ticker, spot, provider)
+    result["mode"] = "buy" if args.buy else "sell"
+    result["candidates"] = candidates
+    result["volume_filter_relaxed"] = relaxed
+    return result
+
+
+def _build_both_json_result(
+    ticker: str,
+    spot: float,
+    df,
+    mode: str,
+    provider: str,
+    args,
+    roll_close_cost: float | None,
+) -> dict:
+    """Both rankings from a single fetched chain — no double fetch.
+
+    _scan_one is called with apply_ivpp=False for --both, so the (direction-
+    specific) IV+pp threshold is applied here, once per side.
+    """
+    thr = args.min_ivpp
+    sell_c, sell_relaxed = _candidates_with_fallback(
+        df, mode, False, args, roll_close_cost, ivpp_threshold=thr,
+    )
+    buy_c, buy_relaxed = _candidates_with_fallback(
+        df, mode, True, args, roll_close_cost, ivpp_threshold=thr,
+    )
+    result = _result_envelope(ticker, spot, provider)
+    result["mode"] = "both"
+    result["sell"] = {"candidates": sell_c, "volume_filter_relaxed": sell_relaxed}
+    result["buy"] = {"candidates": buy_c, "volume_filter_relaxed": buy_relaxed}
+    return result
 
 
 def _scan_one(ticker: str, args, opt_type_fetch: str, mode: str,
-              provider: str, schwab_config: dict | None):
+              provider: str, schwab_config: dict | None,
+              apply_ivpp: bool = True):
     """Fetch and rank one ticker.
 
     Returns (df, spot, earnings_dates, roll_close_cost) on success,
-    or None if the ticker cannot be scanned.
+    or None if the ticker cannot be scanned. apply_ivpp=False leaves the
+    --min-ivpp filter unapplied so --both can apply it per-side downstream.
     """
     import numpy as np
 
@@ -184,7 +263,7 @@ def _scan_one(ticker: str, args, opt_type_fetch: str, mode: str,
         log.error("No options remaining for %s after strike filter.", ticker)
         return None
 
-    if args.min_ivpp is not None:
+    if apply_ivpp and args.min_ivpp is not None:
         if args.buy:
             df = df[df["iv_excess"] * 100 <= -args.min_ivpp]
         else:
@@ -282,6 +361,12 @@ def main() -> None:
         "--buy", action="store_true",
         help="Buy mode: rank by IV vs. surface, lowest first "
              "(IV-cheap relative to neighbors)",
+    )
+    parser.add_argument(
+        "--both", action="store_true",
+        help="Both modes from a single fetch: emit sell and buy rankings "
+             "(JSON: nested 'sell'/'buy' objects, each with its own "
+             "volume_filter_relaxed flag). Avoids fetching the chain twice.",
     )
     parser.add_argument(
         "--roll", action="store_true",
@@ -434,6 +519,10 @@ def main() -> None:
         parser.error("--roll requires --type, --strike, and --expiration")
     if args.roll and len(tickers) > 1:
         parser.error("--roll requires a single ticker")
+    if args.both and args.buy:
+        parser.error("--both cannot be combined with --buy (it emits both)")
+    if args.both and args.roll:
+        parser.error("--both cannot be combined with --roll")
     if args.max_dte < args.min_dte:
         parser.error("--max-dte must be >= --min-dte")
 
@@ -478,7 +567,8 @@ def main() -> None:
     any_success = False
 
     for ticker in tickers:
-        result = _scan_one(ticker, args, opt_type_fetch, mode, provider, schwab_config)
+        result = _scan_one(ticker, args, opt_type_fetch, mode, provider,
+                           schwab_config, apply_ivpp=not args.both)
         if result is None:
             if len(tickers) == 1:
                 sys.exit(1)
@@ -488,9 +578,14 @@ def main() -> None:
         any_success = True
 
         if args.as_json:
-            json_result = _build_json_result(
-                ticker, spot, df, mode, provider, args, roll_close_cost
-            )
+            if args.both:
+                json_result = _build_both_json_result(
+                    ticker, spot, df, mode, provider, args, roll_close_cost
+                )
+            else:
+                json_result = _build_json_result(
+                    ticker, spot, df, mode, provider, args, roll_close_cost
+                )
             if args.html:
                 from options_scanner.report import save_html
                 html_path = _html_path(ticker, mode, args)
@@ -507,15 +602,16 @@ def main() -> None:
                     webbrowser.open(html_path.as_uri())
             json_results.append(json_result)
         else:
-            print_results(
-                df, ticker, spot, earnings_dates, mode,
-                roll_close_cost=roll_close_cost,
-                min_oi=args.min_oi,
-                min_vol=args.min_vol,
-                top_n=args.top,
-                buy=args.buy,
-                no_legend=args.no_legend,
-            )
+            for side_buy in ((False, True) if args.both else (args.buy,)):
+                print_results(
+                    df, ticker, spot, earnings_dates, mode,
+                    roll_close_cost=roll_close_cost,
+                    min_oi=args.min_oi,
+                    min_vol=args.min_vol,
+                    top_n=args.top,
+                    buy=side_buy,
+                    no_legend=args.no_legend,
+                )
             if args.html:
                 from options_scanner.report import save_html
                 html_path = _html_path(ticker, mode, args)
