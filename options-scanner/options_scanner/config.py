@@ -1,5 +1,18 @@
-"""Load options-scanner/config.toml."""
+"""Load options-scanner configuration.
 
+This module prefers values found in a local `config.toml`. Environment
+variables may be used to override values from the file or to provide Schwab
+credentials when the TOML file is absent. Environment variables are
+expected to be of the form `STOCKPILE_*` (examples below).
+
+Recognized environment variables:
+  STOCKPILE_SCHWAB_APP_KEY
+  STOCKPILE_SCHWAB_APP_SECRET
+  STOCKPILE_SCHWAB_CALLBACK_URL
+  STOCKPILE_SCHWAB_TOKEN_FILE
+"""
+
+import os
 import tomllib
 from pathlib import Path
 
@@ -7,11 +20,32 @@ _CONFIG_PATH = Path(__file__).parents[1] / "config.toml"
 
 
 def load_config() -> dict:
-    """Return config dict; empty dict if config.toml is missing."""
-    if not _CONFIG_PATH.exists():
-        return {}
-    with open(_CONFIG_PATH, "rb") as f:
-        return tomllib.load(f)
+    """Return config dict.
+
+    If `config.toml` exists it is loaded first. Any recognized environment
+    variables will then be applied on top of the TOML-derived values so
+    environment values take precedence. If the TOML file is missing Schwab
+    credentials from environment variables will still be applied.
+    """
+    cfg: dict = {}
+    if _CONFIG_PATH.exists():
+        with open(_CONFIG_PATH, "rb") as f:
+            cfg = tomllib.load(f)
+
+    # Schwab overrides
+    schwab_keys = {
+        "app_key": os.environ.get("STOCKPILE_SCHWAB_APP_KEY"),
+        "app_secret": os.environ.get("STOCKPILE_SCHWAB_APP_SECRET"),
+        "callback_url": os.environ.get("STOCKPILE_SCHWAB_CALLBACK_URL"),
+        "token_file": os.environ.get("STOCKPILE_SCHWAB_TOKEN_FILE"),
+    }
+    if any(v is not None for v in schwab_keys.values()):
+        s = cfg.setdefault("schwab", {})
+        for k, v in schwab_keys.items():
+            if v is not None:
+                s[k] = v
+
+    return cfg
 
 
 def get_provider(cfg: dict) -> str:
