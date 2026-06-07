@@ -104,24 +104,25 @@ def main() -> None:
 
     cfg = load_config()
     config_path = Path(__file__).parent / "config.toml"
+    schwab_cfg = get_schwab_config(cfg)
 
-    if not config_path.exists():
+    if not config_path.exists() and not schwab_cfg["app_key"] and not schwab_cfg["app_secret"]:
         example = config_path.parent / "config.toml.example"
         sys.exit(
             f"config.toml not found.\n"
-            f"Copy {example} to {config_path} and fill in your credentials."
+            f"Copy {example} to {config_path} and fill in your credentials, "
+            "or set the STOCKPILE_SCHWAB_* environment variables."
         )
 
-    schwab_cfg = get_schwab_config(cfg)
-
     if not schwab_cfg["app_key"] or schwab_cfg["app_key"].startswith("your-"):
-        sys.exit("Set app_key in options-scanner/config.toml first.")
+        sys.exit("Set app_key in options-scanner/config.toml first or export STOCKPILE_SCHWAB_APP_KEY.")
     if not schwab_cfg["app_secret"] or schwab_cfg["app_secret"].startswith("your-"):
-        sys.exit("Set app_secret in options-scanner/config.toml first.")
+        sys.exit("Set app_secret in options-scanner/config.toml first or export STOCKPILE_SCHWAB_APP_SECRET.")
 
     # config.toml holds your app_secret — tighten its perms before going
     # further (relevant on shared remote/cloud hosts).
-    _harden(config_path)
+    if config_path.exists():
+        _harden(config_path)
 
     token_path = Path(schwab_cfg["token_file"]).expanduser()
     if token_path.exists():
