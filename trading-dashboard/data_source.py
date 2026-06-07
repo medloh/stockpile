@@ -1,5 +1,5 @@
 import time as _time
-import threading, random, tomllib
+import threading, random
 from pathlib import Path
 import yfinance as yf
 import requests
@@ -81,21 +81,32 @@ def _get_schwab_client():
     """
     global _schwab_cfg
     if _schwab_cfg is None:
+        from options_scanner.config import load_config, get_schwab_config
+
         if not _SCHWAB_CONFIG_PATH.exists():
-            raise ValueError(f"Schwab config not found at {_SCHWAB_CONFIG_PATH}. "
-                             "First-time setup: options-scanner/SCHWAB_DATA_SOURCE.md")
-        with open(_SCHWAB_CONFIG_PATH, "rb") as f:
-            cfg = tomllib.load(f).get("schwab", {})
-        app_key, app_secret = cfg.get("app_key", ""), cfg.get("app_secret", "")
+            cfg = load_config()
+            schwab = get_schwab_config(cfg)
+            if not schwab["app_key"] or not schwab["app_secret"]:
+                raise ValueError(
+                    f"Schwab config not found at {_SCHWAB_CONFIG_PATH}. "
+                    "First-time setup: options-scanner/SCHWAB_DATA_SOURCE.md"
+                )
+        else:
+            cfg = load_config()
+            schwab = get_schwab_config(cfg)
+
+        app_key, app_secret = schwab["app_key"], schwab["app_secret"]
         if (not app_key or app_key.startswith("your-")
                 or not app_secret or app_secret.startswith("your-")):
-            raise ValueError("Schwab app_key/app_secret not set in "
-                             "options-scanner/config.toml. First-time setup: "
-                             "options-scanner/SCHWAB_DATA_SOURCE.md")
+            raise ValueError(
+                "Schwab app_key/app_secret not set in options-scanner/config.toml "
+                "or via STOCKPILE_SCHWAB_APP_KEY/STOCKPILE_SCHWAB_APP_SECRET. "
+                "First-time setup: options-scanner/SCHWAB_DATA_SOURCE.md"
+            )
         _schwab_cfg = (
             app_key, app_secret,
-            cfg.get("callback_url", "https://127.0.0.1:8182/"),
-            cfg.get("token_file", "~/.config/schwab-token.json"),
+            schwab["callback_url"],
+            schwab["token_file"],
         )
     from stocks_shared.schwab_live import get_client
     return get_client(*_schwab_cfg)
