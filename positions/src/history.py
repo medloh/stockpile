@@ -22,7 +22,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 _POSITIONS_DIR = Path(__file__).resolve().parent.parent
 HISTORY_PATH = _POSITIONS_DIR / "console_history.jsonl"
@@ -107,7 +107,11 @@ def tracker_runs(limit: int | None = None) -> list[dict]:
             # "Processing: fidelity | CSV: C:\...\fidelity_522.csv"
             csv_part = msg.split("CSV:", 1)[-1].strip()
             if csv_part:
-                cur["csvs"].append(Path(csv_part).stem)
+                # PureWindowsPath, not Path: the log may have been
+                # written on either platform, and it accepts both
+                # separators. Plain Path() on POSIX treats a backslash as
+                # an ordinary character and keeps the whole Windows path.
+                cur["csvs"].append(PureWindowsPath(csv_part).stem)
         elif msg.startswith("ERROR:"):
             cur["status"] = "error"
             cur["error"] = msg[len("ERROR:"):].strip()
