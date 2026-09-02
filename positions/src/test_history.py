@@ -61,19 +61,34 @@ class TestRecordAndRead:
 
 # ── tracker.log parsing ───────────────────────────────────────────────────
 
-OK_RUN = """[2026-08-07 10:49:28] === Run started ===
+# The tracker writes whatever paths its own platform uses, and the console
+# may well read a log written on the other one, so every path-bearing case
+# below runs under both styles.
+WIN_DIR = "C:\\x\\input\\"
+POSIX_DIR = "/home/x/input/"
+PATH_STYLES = pytest.mark.parametrize(
+    "path_prefix", [WIN_DIR, POSIX_DIR], ids=["win", "posix"])
+
+
+def ok_run(path_prefix=WIN_DIR):
+    return f"""[2026-08-07 10:49:28] === Run started ===
 [2026-08-07 10:49:28] Connecting to Google Sheets...
-[2026-08-07 10:49:29] Processing: fidelity | CSV: C:\\x\\input\\fidelity_522.csv
+[2026-08-07 10:49:29] Processing: fidelity | CSV: {path_prefix}fidelity_522.csv
 [2026-08-07 10:49:45] Done: fidelity / sheet-id
 [2026-08-07 10:49:45] === Run completed successfully ===
 """
+
+
+OK_RUN = ok_run()
 
 ERR_RUN = """[2026-08-07 10:41:23] === Run started ===
 [2026-08-07 10:41:23] ERROR: No account named nope.
 """
 
-KILLED_RUN = """[2026-08-07 09:00:00] === Run started ===
-[2026-08-07 09:00:01] Processing: schwab | CSV: C:\\x\\input\\schwab556.csv
+
+def killed_run(path_prefix=WIN_DIR):
+    return f"""[2026-08-07 09:00:00] === Run started ===
+[2026-08-07 09:00:01] Processing: schwab | CSV: {path_prefix}schwab556.csv
 """
 
 
@@ -81,8 +96,9 @@ class TestTrackerRuns:
     def test_no_log(self, hist):
         assert hist.tracker_runs() == []
 
-    def test_successful_run(self, hist):
-        hist.TRACKER_LOG.write_text(OK_RUN, encoding="utf-8")
+    @PATH_STYLES
+    def test_successful_run(self, hist, path_prefix):
+        hist.TRACKER_LOG.write_text(ok_run(path_prefix), encoding="utf-8")
         (run,) = hist.tracker_runs()
         assert run["status"] == "ok"
         assert run["csvs"] == ["fidelity_522"]
@@ -100,18 +116,21 @@ class TestTrackerRuns:
         runs = hist.tracker_runs()
         assert [r["status"] for r in runs] == ["error", "ok"], "newest first"
 
-    def test_interrupted_run_kept_as_incomplete(self, hist):
-        hist.TRACKER_LOG.write_text(OK_RUN + KILLED_RUN, encoding="utf-8")
+    @PATH_STYLES
+    def test_interrupted_run_kept_as_incomplete(self, hist, path_prefix):
+        hist.TRACKER_LOG.write_text(
+            ok_run(path_prefix) + killed_run(path_prefix), encoding="utf-8")
         runs = hist.tracker_runs()
         assert runs[0]["status"] == "incomplete"
         assert runs[0]["csvs"] == ["schwab556"]
         assert runs[1]["status"] == "ok"
 
-    def test_multi_account_run(self, hist):
-        two = OK_RUN.replace(
+    @PATH_STYLES
+    def test_multi_account_run(self, hist, path_prefix):
+        two = ok_run(path_prefix).replace(
             "[2026-08-07 10:49:45] Done: fidelity / sheet-id",
             "[2026-08-07 10:49:45] Done: fidelity / sheet-id\n"
-            "[2026-08-07 10:49:46] Processing: schwab | CSV: C:\\x\\input\\schwab556.csv",
+            f"[2026-08-07 10:49:46] Processing: schwab | CSV: {path_prefix}schwab556.csv",
         )
         hist.TRACKER_LOG.write_text(two, encoding="utf-8")
         (run,) = hist.tracker_runs()
